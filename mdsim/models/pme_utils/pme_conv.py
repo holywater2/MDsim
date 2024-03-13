@@ -4,6 +4,17 @@ import torch.nn as nn
 import numpy as np
 
 
+def get_grid(shape, device):
+    batchsize, size_x, size_y, size_z = shape[0], shape[1], shape[2], shape[3]
+    gridx = torch.linspace(0, 1, size_x)
+    gridx = gridx.reshape(1, size_x, 1, 1, 1).repeat([batchsize, 1, size_y, size_z, 1])
+    gridy = torch.linspace(0, 1, size_y)
+    gridy = gridy.reshape(1, 1, size_y, 1, 1).repeat([batchsize, size_x, 1, size_z, 1])
+    gridz = torch.linspace(0, 1, size_z)
+    gridz = gridz.reshape(1, 1, 1, size_z, 1).repeat([batchsize, size_x, size_y, 1, 1])
+    return torch.cat((gridx, gridy, gridz), dim=-1).to(device)
+
+
 class SpectralConv3d(nn.Module):
     def __init__(self, in_channels, out_channels, modes1, modes2, modes3):
         super(SpectralConv3d, self).__init__()
@@ -229,8 +240,11 @@ class PMEConv(nn.Module):
             [torch.nn.BatchNorm3d(self.width) for _ in range(self.num_layers)]
         )
 
-    def forward(self, residue, fourier_grid):
-        x = torch.cat([residue, fourier_grid], dim=-1)
+    def forward(self, residue, meshgrid=None, reshape=False):
+        if meshgrid is None:
+            meshgrid = get_grid(residue.shape, residue.device)
+
+        x = torch.cat([residue, meshgrid], dim=-1)
         x = self.fc0(x)
         x = x.permute(0, 4, 1, 2, 3)  # [B, H, X, Y, Z]
         if self.padding != 0:
@@ -249,15 +263,7 @@ class PMEConv(nn.Module):
         if self.padding != 0:
             x = x[..., :, : -self.padding, : -self.padding, : -self.padding]
         x = x.permute(0, 2, 3, 4, 1)  # pad the domain if input is non-periodic
+
+        if reshape:
+            x = x.reshape(-1, x.shape[-1])
         return x
-
-
-def get_grid(shape, device):
-    batchsize, size_x, size_y, size_z = shape[0], shape[1], shape[2], shape[3]
-    gridx = torch.linspace(0, 1, size_x)
-    gridx = gridx.reshape(1, size_x, 1, 1, 1).repeat([batchsize, 1, size_y, size_z, 1])
-    gridy = torch.linspace(0, 1, size_y)
-    gridy = gridy.reshape(1, 1, size_y, 1, 1).repeat([batchsize, size_x, 1, size_z, 1])
-    gridz = torch.linspace(0, 1, size_z)
-    gridz = gridz.reshape(1, 1, 1, size_z, 1).repeat([batchsize, size_x, size_y, 1, 1])
-    return torch.cat((gridx, gridy, gridz), dim=-1).to(device)

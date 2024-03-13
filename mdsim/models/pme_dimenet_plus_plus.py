@@ -542,8 +542,6 @@ class DimeNetPlusPlusWrap(DimeNetPlusPlus):
             x = interaction_block(x, rbf, sbf, idx_kj, idx_ji)
             P += output_block(x, rbf, i, num_nodes=pos.size(0))
 
-        energy = P.sum(dim=0) if batch is None else scatter(P, batch, dim=0)
-
         edge_index = radius_graph(data.pos, self.cutoff, batch, loop=False)
         src, dst = edge_index
         edge_vec = data.pos[src] - data.pos[dst]
@@ -569,16 +567,15 @@ class DimeNetPlusPlusWrap(DimeNetPlusPlus):
             if i != self.num_sh_gcn_layers - 1:
                 h2 = self.act_sh(h2)
 
-        # 여기서 부터
         mesh = init_particle_mesh(data.cell, self.mesh_partition, self.use_pbc)
-        # mesh_feat = init_potential(
-        #     data.pos, data.atomic_numbers, data.batch, mesh, self.use_pbc, n=16
-        # )
-        mesh_feat = torch.zeros(
-            mesh["meshgrid_flat"].size(0),
-            self.mesh_channel,
-            device=data.pos.device,
+        mesh_feat = init_potential(
+            data.pos, data.atomic_numbers, data.batch, mesh, self.use_pbc, n=16
         )
+        # mesh_feat = torch.zeros(
+        #     mesh["meshgrid_flat"].size(0),
+        #     self.mesh_channel,
+        #     device=data.pos.device,
+        # )
 
         mesh_dst, atom_src, edge_vec = radius_and_edge_atom_to_mesh(
             data.pos, data.batch, mesh, self.mesh_cutoff, self.use_pbc
@@ -619,9 +616,7 @@ class DimeNetPlusPlusWrap(DimeNetPlusPlus):
             -1,
         )
 
-        mesh_grid = get_grid(mesh_feat.shape, mesh_feat.device)
-        mesh_feat = self.pmeconv(mesh_feat, mesh_grid)
-        mesh_feat = mesh_feat.reshape(-1, mesh_feat.shape[-1])
+        mesh_feat = self.pmeconv(mesh_feat, reshape=True)
 
         h2 = self.mesh_to_atom_gcn.forward(
             (mesh_dst, atom_src),
@@ -631,7 +626,9 @@ class DimeNetPlusPlusWrap(DimeNetPlusPlus):
             dim_size=data.pos.size(0),
         )
 
-        energy += h2
+        P += h2
+
+        energy = P.sum(dim=0) if batch is None else scatter(P, batch, dim=0)
 
         return energy
 
