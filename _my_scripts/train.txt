@@ -34,3 +34,5 @@ CUDA_VISIBLE_DEVICES=6 python main.py --mode train --config-yml configs/water/pm
 CUDA_VISIBLE_DEVICES=0 python main.py --mode train --config-yml configs/water/pme_schnet_v3.yml --size 1k --identifier a # (seperate flow)
 
 CUDA_VISIBLE_DEVICES=2 python main.py --mode train --config-yml configs/water/pme_schnet_v3-fm.yml --size 1k --identifier a # (using only fourier)
+
+CUDA_VISIBLE_DEVICES=3 python main.py --mode train --config-yml configs/water/pme_schnet_v3-fm2-8.yml --size 1k --identifier a # (not using ff)
