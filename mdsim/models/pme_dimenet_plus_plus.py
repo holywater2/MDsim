@@ -562,7 +562,7 @@ class DimeNetPlusPlusWrap(DimeNetPlusPlus):
             basis="gaussian",
             cutoff=False,
         ).mul(self.radial_embed_size**0.5)
-
+        z = data.atomic_numbers.long()
         h2 = self.embedding_sh(z)
         for i, gcn in enumerate(self.SphericalGCNs):
             h2 = gcn(edge_index, h2, edge_feat, edge_embed, dim_size=data.pos.size(0))
