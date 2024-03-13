@@ -2,7 +2,7 @@ includes:
 - configs/water/base_no_amsgrad.yml
 
 model:
-  name: dimenetplusplus
+  name: dimenetplusplus_sh
   hidden_channels: 128
   out_emb_channels: 256
   int_emb_size: 64
