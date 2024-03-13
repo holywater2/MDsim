@@ -16,7 +16,7 @@ class Flags:
         self.parser.add_argument_group("Core Arguments")
         self.parser.add_argument(
             "--mode",
-            default='train',
+            default="train",
             choices=["train", "predict", "run-relaxations", "validate"],
             help="Whether to train the model, make predictions, or to run relaxations",
         )
@@ -27,6 +27,7 @@ class Flags:
         )
         self.parser.add_argument(
             "--identifier",
+            "-id",
             default=None,
             type=str,
             help="Experiment identifier to append to checkpoint/log/result directory",
@@ -119,27 +120,14 @@ class Flags:
             default="nccl",
             help="Backend for DDP",
         )
-        self.parser.add_argument(
-            "--local_rank", default=0, type=int, help="Local rank"
-        )
-        self.parser.add_argument(
-            "--no-ddp", action="store_true", help="Do not use DDP"
-        )
-        
+        self.parser.add_argument("--local_rank", default=0, type=int, help="Local rank")
+        self.parser.add_argument("--no-ddp", action="store_true", help="Do not use DDP")
+
         # added args from mdsim.
-        self.parser.add_argument(
-            "--no_energy",
-            action="store_true"
-        )
-        self.parser.add_argument(
-            "--molecule", type=str, help="md17 molecule"
-        )
-        self.parser.add_argument(
-            "--size", type=str, help="dataset size"
-        )
-        self.parser.add_argument(
-            "--cutoff", type=float, help="reset radius cutoff"
-        )
+        self.parser.add_argument("--no_energy", action="store_true")
+        self.parser.add_argument("--molecule", type=str, help="md17 molecule")
+        self.parser.add_argument("--size", type=str, help="dataset size")
+        self.parser.add_argument("--cutoff", type=float, help="reset radius cutoff")
         self.parser.add_argument(
             "--lr_patience", type=int, help="patience for lr scheduler"
         )
