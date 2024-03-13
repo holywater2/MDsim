@@ -15,10 +15,12 @@ class BaseTask:
         if self.config["checkpoint"] is not None:
             self.trainer.load_checkpoint(self.config["checkpoint"])
         else:
-            ckpt_dir = (Path(self.trainer.config["cmd"]["checkpoint_dir"]) / 'checkpoint.pt')
+            ckpt_dir = (
+                Path(self.trainer.config["cmd"]["checkpoint_dir"]) / "checkpoint.pt"
+            )
             if ckpt_dir.exists():
                 self.trainer.load_checkpoint(ckpt_dir)
-            
+
         # save checkpoint path to runner state for slurm resubmissions
         self.chkpt_path = os.path.join(
             self.trainer.config["cmd"]["checkpoint_dir"], "checkpoint.pt"
@@ -45,9 +47,7 @@ class TrainTask(BaseTask):
     def run(self):
         try:
             self.trainer.train(
-                disable_eval_tqdm=self.config.get(
-                    "hide_eval_progressbar", False
-                )
+                disable_eval_tqdm=self.config.get("hide_eval_progressbar", False)
             )
         except RuntimeError as e:
             self._process_error(e)

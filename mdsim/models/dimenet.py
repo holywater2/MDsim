@@ -6,7 +6,7 @@ LICENSE file in the root directory of this source tree.
 """
 
 import torch
-from torch_geometric.nn import DimeNet, radius_graph
+from torch_geometric.nn import radius_graph
 from torch_scatter import scatter
 from torch_sparse import SparseTensor
 
@@ -16,6 +16,7 @@ from mdsim.common.utils import (
     get_pbc_distances,
     radius_graph_pbc,
 )
+from mdsim.models.utils.dimenet_layers import DimeNet
 
 
 @registry.register_model("dimenet")

@@ -1,0 +1,31 @@
+# Schnet
+CUDA_VISIBLE_DEVICES=7 python main.py --mode train --config-yml configs/md17/schnet.yml --molecule aspirin
+
+# Gemnet-dT
+CUDA_VISIBLE_DEVICES=6 python main.py --mode train --config-yml configs/md17/gemnet-dT.yml --molecule aspirin
+
+# Gemnet-T
+CUDA_VISIBLE_DEVICES=5 python main.py --mode train --config-yml configs/md17/gemnet-T.yml --molecule aspirin
+
+# dimenet
+CUDA_VISIBLE_DEVICES=4 python main.py --mode train --config-yml configs/md17/dimenet.yml --molecule aspirin
+
+# forcenet
+CUDA_VISIBLE_DEVICES=3 python main.py --mode train --config-yml configs/md17/forcenet.yml --molecule aspirin
+
+# nequip
+CUDA_VISIBLE_DEVICES=2 python main.py --mode train --config-yml configs/md17/nequip/aspirin.yml --nequip
+
+
+CUDA_VISIBLE_DEVICES=3 python simulate.py --config_yml configs/simulate/aspirin.yml --model_dir MODELPATH/md17-aspirin_10k_forcenet_size512
+
+
+CUDA_VISIBLE_DEVICES=1 python main.py --mode train --config-yml configs/water/schnet.yml --size 1k
+
+CUDA_VISIBLE_DEVICES=4 python main.py --mode train --config-yml configs/water/pme_schnet.yml --size 1k
+
+CUDA_VISIBLE_DEVICES=3 python main.py --mode train --config-yml configs/water/pme_schnet.yml --size 1k --identifier ver3 #
+
+CUDA_VISIBLE_DEVICES=5 python main.py --mode train --config-yml configs/water/pme_schnet.yml --size 1k --identifier ver4 # (using 3 layers and 3 interaction)
+
+CUDA_VISIBLE_DEVICES=6 python main.py --mode train --config-yml configs/water/pme_schnet.yml --size 1k --identifier ver5 # (not using ff)

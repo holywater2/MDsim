@@ -57,9 +57,8 @@ OFFSET_LIST = [
     [1, 1, 1],
 ]
 
-def save_checkpoint(
-    state, checkpoint_dir="", checkpoint_file="checkpoint.pt"
-):
+
+def save_checkpoint(state, checkpoint_dir="", checkpoint_file="checkpoint.pt"):
     filename = os.path.join(checkpoint_dir, checkpoint_file)
     torch.save(state, filename)
 
@@ -126,6 +125,7 @@ def print_cuda_usage():
 
 def conditional_grad(dec):
     "Decorator to enable/disable grad depending on whether force/energy predictions are being made"
+
     # Adapted from https://stackoverflow.com/questions/60907323/accessing-class-property-as-decorator-argument
     def decorator(func):
         @wraps(func)
@@ -180,9 +180,7 @@ def collate(data_list):
     for item, key in product(data_list, keys):
         data[key].append(item[key])
         if torch.is_tensor(item[key]):
-            s = slices[key][-1] + item[key].size(
-                item.__cat_dim__(key, item[key])
-            )
+            s = slices[key][-1] + item[key].size(item.__cat_dim__(key, item[key]))
         elif isinstance(item[key], int) or isinstance(item[key], float):
             s = slices[key][-1] + 1
         else:
@@ -204,6 +202,7 @@ def collate(data_list):
         slices[key] = torch.tensor(slices[key], dtype=torch.long)
 
     return data, slices
+
 
 # Copied from https://github.com/facebookresearch/mmf/blob/master/mmf/utils/env.py#L89.
 def setup_imports():
@@ -245,9 +244,8 @@ def setup_imports():
                 splits = f.split(os.sep)
                 file_name = splits[-1]
                 module_name = file_name[: file_name.find(".py")]
-                importlib.import_module(
-                    "mdsim.%s.%s" % (key[1:], module_name)
-                )
+                print(key[1:], module_name)
+                importlib.import_module("mdsim.%s.%s" % (key[1:], module_name))
 
     experimental_folder = os.path.join(root_folder, "../experimental/")
     if os.path.exists(experimental_folder):
@@ -268,7 +266,7 @@ def setup_imports():
                 experimental_files.remove(f)
         for f in experimental_files:
             splits = f.split(os.sep)
-            file_name = ".".join(splits[-splits[::-1].index(".."):])
+            file_name = ".".join(splits[-splits[::-1].index("..") :])
             module_name = file_name[: file_name.find(".py")]
             importlib.import_module(module_name)
 
@@ -355,7 +353,7 @@ def load_config(path: str, previous_includes: list = []):
 
 def build_config(args, args_override):
     config, duplicates_warning, duplicates_error = load_config(args.config_yml)
-    
+
     if len(duplicates_warning) > 0:
         logging.warning(
             f"Overwritten config parameters from included configs "
@@ -371,13 +369,15 @@ def build_config(args, args_override):
     if args_override != []:
         overrides = create_dict_from_args(args_override)
         config, _ = merge_dicts(config, overrides)
-    
+
     if args.molecule is not None:
-        assert config['dataset']['name'] == 'md17', 'only MD17 datasets admit specification of the molecule.'
-        config['dataset']['molecule'] = args.molecule
+        assert (
+            config["dataset"]["name"] == "md17"
+        ), "only MD17 datasets admit specification of the molecule."
+        config["dataset"]["molecule"] = args.molecule
     if args.size is not None:
-        config['dataset']['size'] = args.size
-        
+        config["dataset"]["size"] = args.size
+
     # Some other flags.
     config["mode"] = args.mode
     config["timestamp_id"] = args.timestamp_id
@@ -398,45 +398,46 @@ def build_config(args, args_override):
     config["world_size"] = args.num_nodes * args.num_gpus
     config["distributed_backend"] = args.distributed_backend
     config["noddp"] = args.no_ddp
-    
+
     if args.identifier is not None:
         config["identifier"] = args.identifier
-    elif 'identifier' not in config:
+    elif "identifier" not in config:
         config["identifier"] = ""
 
     if args.cutoff is not None:
         config["model"]["cutoff"] = args.cutoff
-        
+
     if args.lr_patience is not None:
         config["optim"]["patience"] = args.lr_patience
-        
+
     if args.max_epochs:
         config["optim"]["max_epochs"] = args.max_epochs
 
     return config
 
+
 def compose_data_cfg(data_cfg):
-    dataset_name = data_cfg['name']
-    if dataset_name == 'md17':
-        data_cfg['src'] = os.path.join(data_cfg['src'], data_cfg['molecule'])
-        data_cfg['name'] = 'md17-' + data_cfg['molecule']
-    src = os.path.join(data_cfg['src'], data_cfg['size'])
-    data_cfg['src'] = os.path.join(src, 'train')
-    
-    norm_stats = np.load(os.path.join(src, 'metadata.npy'), allow_pickle=True).item()
-    if not data_cfg['normalize_labels']:
+    dataset_name = data_cfg["name"]
+    if dataset_name == "md17":
+        data_cfg["src"] = os.path.join(data_cfg["src"], data_cfg["molecule"])
+        data_cfg["name"] = "md17-" + data_cfg["molecule"]
+    src = os.path.join(data_cfg["src"], data_cfg["size"])
+    data_cfg["src"] = os.path.join(src, "train")
+
+    norm_stats = np.load(os.path.join(src, "metadata.npy"), allow_pickle=True).item()
+    if not data_cfg["normalize_labels"]:
         # always substract mean of energy, even when <normalize_labels==False>.
         # this is done in <trainer.load_datasets>.
-        data_cfg['target_mean'] = float(norm_stats['e_mean'])
-        data_cfg['target_std'] = 1.
-        data_cfg['grad_target_mean'] = 0.
-        data_cfg['grad_target_std'] = 1.
-        data_cfg['normalize_labels'] = True
+        data_cfg["target_mean"] = float(norm_stats["e_mean"])
+        data_cfg["target_std"] = 1.0
+        data_cfg["grad_target_mean"] = 0.0
+        data_cfg["grad_target_std"] = 1.0
+        data_cfg["normalize_labels"] = True
     else:
-        data_cfg['target_mean'] = float(norm_stats['e_mean'])
-        data_cfg['target_std'] = float(norm_stats['e_std'])
-        data_cfg['grad_target_mean'] = float(norm_stats['f_mean'])
-        data_cfg['grad_target_std'] = float(norm_stats['f_std'])
+        data_cfg["target_mean"] = float(norm_stats["e_mean"])
+        data_cfg["target_std"] = float(norm_stats["e_std"])
+        data_cfg["grad_target_mean"] = float(norm_stats["f_mean"])
+        data_cfg["grad_target_std"] = float(norm_stats["f_std"])
     # train, val, test
     return data_cfg
 
@@ -559,9 +560,7 @@ def setup_logging():
 
         # Send INFO to stdout
         handler_out = logging.StreamHandler(sys.stdout)
-        handler_out.addFilter(
-            SeverityLevelBetween(logging.INFO, logging.WARNING)
-        )
+        handler_out.addFilter(SeverityLevelBetween(logging.INFO, logging.WARNING))
         handler_out.setFormatter(log_formatter)
         root.addHandler(handler_out)
 
@@ -576,9 +575,7 @@ def compute_neighbors(data, edge_index):
     # Get number of neighbors
     # segment_coo assumes sorted index
     ones = edge_index[1].new_ones(1).expand_as(edge_index[1])
-    num_neighbors = segment_coo(
-        ones, edge_index[1], dim_size=data.natoms.sum()
-    )
+    num_neighbors = segment_coo(ones, edge_index[1], dim_size=data.natoms.sum())
 
     # Get number of neighbors per image
     image_indptr = torch.zeros(
@@ -600,39 +597,53 @@ def lattice_params_to_matrix_torch(lengths, angles):
 
     val = (coses[:, 0] * coses[:, 1] - coses[:, 2]) / (sins[:, 0] * sins[:, 1])
     # Sometimes rounding errors result in values slightly > 1.
-    val = torch.clamp(val, -1., 1.)
+    val = torch.clamp(val, -1.0, 1.0)
     gamma_star = torch.arccos(val)
 
-    vector_a = torch.stack([
-        lengths[:, 0] * sins[:, 1],
-        torch.zeros(lengths.size(0), device=lengths.device),
-        lengths[:, 0] * coses[:, 1]], dim=1)
-    vector_b = torch.stack([
-        -lengths[:, 1] * sins[:, 0] * torch.cos(gamma_star),
-        lengths[:, 1] * sins[:, 0] * torch.sin(gamma_star),
-        lengths[:, 1] * coses[:, 0]], dim=1)
-    vector_c = torch.stack([
-        torch.zeros(lengths.size(0), device=lengths.device),
-        torch.zeros(lengths.size(0), device=lengths.device),
-        lengths[:, 2]], dim=1)
+    vector_a = torch.stack(
+        [
+            lengths[:, 0] * sins[:, 1],
+            torch.zeros(lengths.size(0), device=lengths.device),
+            lengths[:, 0] * coses[:, 1],
+        ],
+        dim=1,
+    )
+    vector_b = torch.stack(
+        [
+            -lengths[:, 1] * sins[:, 0] * torch.cos(gamma_star),
+            lengths[:, 1] * sins[:, 0] * torch.sin(gamma_star),
+            lengths[:, 1] * coses[:, 0],
+        ],
+        dim=1,
+    )
+    vector_c = torch.stack(
+        [
+            torch.zeros(lengths.size(0), device=lengths.device),
+            torch.zeros(lengths.size(0), device=lengths.device),
+            lengths[:, 2],
+        ],
+        dim=1,
+    )
 
     return torch.stack([vector_a, vector_b, vector_c], dim=1)
 
+
 def radius_graph(positions, n_node, radius, bonds=None, add_self_edges=True):
-  batch = torch.arange(len(n_node)).to(n_node.device).repeat_interleave(n_node, dim=0)
-  senders, receivers = pyg_radius_graph(positions, radius, batch, loop=add_self_edges)
-  if bonds is not None:
-    edge_indices = torch.cat([senders.unsqueeze(1), receivers.unsqueeze(1)], dim=1)
-    all_edges = torch.cat([edge_indices, bonds], dim=0)
-    all_edges, counts = torch.unique(all_edges, dim=0, return_counts=True)
-    edge_types = (counts > 1).int()
-    senders, receivers = all_edges[:, 0], all_edges[:, 1]
-  else:
-    edge_types = None
-  # displacements normalized with radius.
-  displacements = (positions[senders] - positions[receivers]) / radius
-  distances = displacements.norm(dim=-1, keepdim=True)
-  return senders, receivers, displacements, distances, edge_types
+    batch = torch.arange(len(n_node)).to(n_node.device).repeat_interleave(n_node, dim=0)
+    senders, receivers = pyg_radius_graph(positions, radius, batch, loop=add_self_edges)
+    if bonds is not None:
+        edge_indices = torch.cat([senders.unsqueeze(1), receivers.unsqueeze(1)], dim=1)
+        all_edges = torch.cat([edge_indices, bonds], dim=0)
+        all_edges, counts = torch.unique(all_edges, dim=0, return_counts=True)
+        edge_types = (counts > 1).int()
+        senders, receivers = all_edges[:, 0], all_edges[:, 1]
+    else:
+        edge_types = None
+    # displacements normalized with radius.
+    displacements = (positions[senders] - positions[receivers]) / radius
+    distances = displacements.norm(dim=-1, keepdim=True)
+    return senders, receivers, displacements, distances, edge_types
+
 
 def radius_graph_pbc(data, radius, max_num_neighbors_threshold, topk_per_pair=None):
     """Computes pbc graph edges under pbc.
@@ -646,16 +657,12 @@ def radius_graph_pbc(data, radius, max_num_neighbors_threshold, topk_per_pair=No
     device = atom_pos.device
     # Before computing the pairwise distances between atoms, first create a list of atom indices to compare for the entire batch
     num_atoms_per_image = num_atoms
-    num_atoms_per_image_sqr = (num_atoms_per_image ** 2).long()
+    num_atoms_per_image_sqr = (num_atoms_per_image**2).long()
 
     # index offset between images
-    index_offset = (
-        torch.cumsum(num_atoms_per_image, dim=0) - num_atoms_per_image
-    )
+    index_offset = torch.cumsum(num_atoms_per_image, dim=0) - num_atoms_per_image
 
-    index_offset_expand = torch.repeat_interleave(
-        index_offset, num_atoms_per_image_sqr
-    )
+    index_offset_expand = torch.repeat_interleave(index_offset, num_atoms_per_image_sqr)
     num_atoms_per_image_expand = torch.repeat_interleave(
         num_atoms_per_image, num_atoms_per_image_sqr
     )
@@ -672,31 +679,23 @@ def radius_graph_pbc(data, radius, max_num_neighbors_threshold, topk_per_pair=No
     index_sqr_offset = torch.repeat_interleave(
         index_sqr_offset, num_atoms_per_image_sqr
     )
-    atom_count_sqr = (
-        torch.arange(num_atom_pairs, device=device) - index_sqr_offset
-    )
+    atom_count_sqr = torch.arange(num_atom_pairs, device=device) - index_sqr_offset
 
     # Compute the indices for the pairs of atoms (using division and mod)
     # If the systems get too large this apporach could run into numerical precision issues
     index1 = (
         (atom_count_sqr // num_atoms_per_image_expand)
     ).long() + index_offset_expand
-    index2 = (
-        atom_count_sqr % num_atoms_per_image_expand
-    ).long() + index_offset_expand
+    index2 = (atom_count_sqr % num_atoms_per_image_expand).long() + index_offset_expand
     # Get the positions for each atom
     pos1 = torch.index_select(atom_pos, 0, index1)
     pos2 = torch.index_select(atom_pos, 0, index2)
-    
+
     unit_cell = torch.tensor(OFFSET_LIST, device=device).float()
     num_cells = len(unit_cell)
-    unit_cell_per_atom = unit_cell.view(1, num_cells, 3).repeat(
-        len(index2), 1, 1
-    )
+    unit_cell_per_atom = unit_cell.view(1, num_cells, 3).repeat(len(index2), 1, 1)
     unit_cell = torch.transpose(unit_cell, 0, 1)
-    unit_cell_batch = unit_cell.view(1, 3, num_cells).expand(
-        batch_size, -1, -1
-    )
+    unit_cell_batch = unit_cell.view(1, 3, num_cells).expand(batch_size, -1, -1)
 
     # Compute the x, y, z positional offsets for each cell in each image
     data_cell = torch.transpose(lattice, 1, 2)
@@ -721,15 +720,17 @@ def radius_graph_pbc(data, radius, max_num_neighbors_threshold, topk_per_pair=No
         atom_distance_sqr_sort_index = torch.argsort(atom_distance_sqr, dim=1)
         assert atom_distance_sqr_sort_index.size() == (num_atom_pairs, num_cells)
         atom_distance_sqr_sort_index = (
-            atom_distance_sqr_sort_index +
-            torch.arange(num_atom_pairs, device=device)[:, None] * num_cells).view(-1)
-        topk_mask = (torch.arange(num_cells, device=device)[None, :] <
-                     topk_per_pair[:, None])
+            atom_distance_sqr_sort_index
+            + torch.arange(num_atom_pairs, device=device)[:, None] * num_cells
+        ).view(-1)
+        topk_mask = (
+            torch.arange(num_cells, device=device)[None, :] < topk_per_pair[:, None]
+        )
         topk_mask = topk_mask.view(-1)
         topk_indices = atom_distance_sqr_sort_index.masked_select(topk_mask)
 
         topk_mask = torch.zeros(num_atom_pairs * num_cells, device=device)
-        topk_mask.scatter_(0, topk_indices, 1.)
+        topk_mask.scatter_(0, topk_indices, 1.0)
         topk_mask = topk_mask.bool()
 
     atom_distance_sqr = atom_distance_sqr.view(-1)
@@ -755,33 +756,36 @@ def radius_graph_pbc(data, radius, max_num_neighbors_threshold, topk_per_pair=No
 
     # Compute neighbors per image
     _max_neighbors = copy.deepcopy(num_neighbors)
-    _max_neighbors[
-        _max_neighbors > max_num_neighbors_threshold
-    ] = max_num_neighbors_threshold
+    _max_neighbors[_max_neighbors > max_num_neighbors_threshold] = (
+        max_num_neighbors_threshold
+    )
     _num_neighbors = torch.zeros(len(atom_pos) + 1, device=device).long()
     _natoms = torch.zeros(num_atoms.shape[0] + 1, device=device).long()
     _num_neighbors[1:] = torch.cumsum(_max_neighbors, dim=0)
     _natoms[1:] = torch.cumsum(num_atoms, dim=0)
-    num_neighbors_image = (
-        _num_neighbors[_natoms[1:]] - _num_neighbors[_natoms[:-1]]
-    )
+    num_neighbors_image = _num_neighbors[_natoms[1:]] - _num_neighbors[_natoms[:-1]]
 
     atom_distance_sqr = torch.masked_select(atom_distance_sqr, mask)
-    # return torch.stack((index2, index1)), unit_cell, atom_distance_sqr.sqrt(), num_neighbors_image    
-    
+    # return torch.stack((index2, index1)), unit_cell, atom_distance_sqr.sqrt(), num_neighbors_image
+
     # If max_num_neighbors is below the threshold, return early
     if (
         max_num_neighbors <= max_num_neighbors_threshold
         or max_num_neighbors_threshold <= 0
     ):
-        return torch.stack((index2, index1)), unit_cell, atom_distance_sqr.sqrt(), num_neighbors_image
+        return (
+            torch.stack((index2, index1)),
+            unit_cell,
+            atom_distance_sqr.sqrt(),
+            num_neighbors_image,
+        )
     # atom_distance_sqr.sqrt() distance
 
     # Create a tensor of size [num_atoms, max_num_neighbors] to sort the distances of the neighbors.
     # Fill with values greater than radius*radius so we can easily remove unused distances later.
-    distance_sort = torch.zeros(
-        len(atom_pos) * max_num_neighbors, device=device
-    ).fill_(radius * radius + 1.0)
+    distance_sort = torch.zeros(len(atom_pos) * max_num_neighbors, device=device).fill_(
+        radius * radius + 1.0
+    )
 
     # Create an index map to map distances from atom_distance_sqr to distance_sort
     index_neighbor_offset = torch.cumsum(num_neighbors, dim=0) - num_neighbors
@@ -826,12 +830,13 @@ def radius_graph_pbc(data, radius, max_num_neighbors_threshold, topk_per_pair=No
     if topk_per_pair is not None:
         topk_mask = torch.masked_select(topk_mask, mask_num_neighbors)
 
-    edge_index = torch.stack((index2, index1))   
+    edge_index = torch.stack((index2, index1))
     atom_distance_sqr = torch.masked_select(atom_distance_sqr, mask_num_neighbors)
-    
+
     return edge_index, unit_cell, atom_distance_sqr.sqrt(), num_neighbors_image
     # atom_distance_sqr.sqrt() distance
-    
+
+
 def get_pbc_distances(
     pos,
     edge_index,
@@ -847,7 +852,7 @@ def get_pbc_distances(
 
     # correct for pbc
     lattice_edges = torch.repeat_interleave(lattice, num_edges, dim=0)
-    offsets = torch.einsum('bi,bij->bj', cell_offsets, lattice_edges)
+    offsets = torch.einsum("bi,bij->bj", cell_offsets, lattice_edges)
     distance_vectors += offsets
 
     # compute distances
@@ -866,15 +871,21 @@ def get_pbc_distances(
 
     return out
 
-def get_n_edge(senders, n_node):
-  """
-  return number of edges for each graph in the batched graph. 
-  Has the same shape as <n_node>.
-  """
-  index_offsets = torch.cat([torch.zeros(1).to(n_node.device), 
-                             torch.cumsum(n_node, -1)], dim=-1)
-  n_edge = torch.LongTensor([torch.logical_and(senders >= index_offsets[i], 
-                                               senders < index_offsets[i+1]).sum() 
-                             for i in range(len(n_node))]).to(n_node.device)
-  return n_edge
 
+def get_n_edge(senders, n_node):
+    """
+    return number of edges for each graph in the batched graph.
+    Has the same shape as <n_node>.
+    """
+    index_offsets = torch.cat(
+        [torch.zeros(1).to(n_node.device), torch.cumsum(n_node, -1)], dim=-1
+    )
+    n_edge = torch.LongTensor(
+        [
+            torch.logical_and(
+                senders >= index_offsets[i], senders < index_offsets[i + 1]
+            ).sum()
+            for i in range(len(n_node))
+        ]
+    ).to(n_node.device)
+    return n_edge

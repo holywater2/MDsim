@@ -6,6 +6,7 @@ import time
 
 import submitit
 
+
 from mdsim.common import distutils
 from mdsim.common.flags import flags
 from mdsim.common.registry import registry
@@ -15,8 +16,10 @@ from mdsim.common.utils import (
     save_experiment_log,
     setup_imports,
     setup_logging,
-    compose_data_cfg
+    compose_data_cfg,
 )
+
+from mdsim.models import dimenet
 
 
 class Runner(submitit.helpers.Checkpointable):
@@ -27,26 +30,24 @@ class Runner(submitit.helpers.Checkpointable):
         setup_logging()
         self.config = copy.deepcopy(config)
 
-        if config['distributed']:
+        if config["distributed"]:
             distutils.setup(config)
 
         try:
             setup_imports()
-            
+
             # compose dataset configs.
-            train_data_cfg = config['dataset']
+            train_data_cfg = config["dataset"]
             train_data_cfg = compose_data_cfg(train_data_cfg)
-            config['dataset'] = [
+            config["dataset"] = [
                 train_data_cfg,
-                {'src': os.path.join(os.path.dirname(train_data_cfg['src']), 'val')}
+                {"src": os.path.join(os.path.dirname(train_data_cfg["src"]), "val")},
             ]
-            
+
             self.config = copy.deepcopy(config)
-            
+
             # initialize trainer.
-            self.trainer = registry.get_trainer_class(
-                config.get("trainer", "energy")
-            )(
+            self.trainer = registry.get_trainer_class(config.get("trainer", "energy"))(
                 task=config["task"],
                 model=config["model"],
                 dataset=config["dataset"],
@@ -62,11 +63,16 @@ class Runner(submitit.helpers.Checkpointable):
                 amp=config.get("amp", False),
                 cpu=config.get("cpu", False),
                 slurm=config.get("slurm", {}),
-                no_energy=config.get("no_energy", False)
+                no_energy=config.get("no_energy", False),
             )
-            
+
             # save config.
-            with open(os.path.join(self.trainer.config["cmd"]["checkpoint_dir"], 'config.yml'), 'w') as yf:
+            with open(
+                os.path.join(
+                    self.trainer.config["cmd"]["checkpoint_dir"], "config.yml"
+                ),
+                "w",
+            ) as yf:
                 yaml.dump(self.config, yf, default_flow_style=False)
 
             self.task = registry.get_task_class(config["mode"])(self.config)
@@ -77,7 +83,7 @@ class Runner(submitit.helpers.Checkpointable):
             if distutils.is_master():
                 logging.info(f"Total time taken: {time.time() - start_time}")
         finally:
-            if config['distributed']:
+            if config["distributed"]:
                 distutils.cleanup()
 
     def checkpoint(self, *args, **kwargs):
@@ -90,18 +96,20 @@ class Runner(submitit.helpers.Checkpointable):
         return submitit.helpers.DelayedSubmission(new_runner, self.config)
 
 
+import warnings
+
+warnings.simplefilter("ignore", UserWarning)
+
 if __name__ == "__main__":
-    setup_logging() 
+    setup_logging()
     parser = flags.get_parser()
     args, override_args = parser.parse_known_args()
     if args.nequip:
-        os.system(f'nequip-train {args.config_yml}')
+        os.system(f"nequip-train {args.config_yml}")
     else:
         config = build_config(args, override_args)
         if args.submit:  # Run on cluster
-            slurm_add_params = config.get(
-                "slurm", None
-            )  # additional slurm arguments
+            slurm_add_params = config.get("slurm", None)  # additional slurm arguments
             if args.sweep_yml:  # Run grid search
                 configs = create_grid(config, args.sweep_yml)
             else:
@@ -126,9 +134,7 @@ if __name__ == "__main__":
                 config["slurm"] = copy.deepcopy(executor.parameters)
                 config["slurm"]["folder"] = str(executor.folder)
             jobs = executor.map_array(Runner(), configs)
-            logging.info(
-                f"Submitted jobs: {', '.join([job.job_id for job in jobs])}"
-            )
+            logging.info(f"Submitted jobs: {', '.join([job.job_id for job in jobs])}")
             log_file = save_experiment_log(args, jobs, configs)
             logging.info(f"Experiment log saved to: {log_file}")
 

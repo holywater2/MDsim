@@ -65,6 +65,7 @@ class Trainer(ABC):
         slurm (dict): Slurm configuration. Currently just for keeping track.
             (default: :obj:`{}`)
     """
+
     def __init__(
         self,
         task,
@@ -87,7 +88,7 @@ class Trainer(ABC):
         slurm={},
         noddp=False,
         no_energy=False,
-        simulate=False
+        simulate=False,
     ):
         self.no_energy = no_energy
         self.simulate = simulate
@@ -105,23 +106,23 @@ class Trainer(ABC):
             # but there are no gpu devices available
         if run_dir is None:
             run_dir = os.getcwd()
-        
+
         if timestamp_id is None:
             timestamp = torch.tensor(datetime.datetime.now().timestamp()).to(
                 self.device
             )
             # create directories from master rank only
             distutils.broadcast(timestamp, 0)
-            timestamp = datetime.datetime.fromtimestamp(
-                timestamp.int()
-            ).strftime("%Y-%m-%d-%H-%M-%S")
+            timestamp = datetime.datetime.fromtimestamp(timestamp.int()).strftime(
+                "%Y-%m-%d-%H-%M-%S"
+            )
             if identifier:
                 self.timestamp_id = f"{timestamp}-{identifier}"
             else:
                 self.timestamp_id = timestamp
         else:
             self.timestamp_id = timestamp_id
-        
+
         # compose expname.
         data_name = dataset[0]["name"]
         model_name = model["name"]
@@ -158,7 +159,6 @@ class Trainer(ABC):
             "logger": logger,
             "amp": amp,
             "gpus": distutils.get_world_size() if not self.cpu else 0,
-            
             "cmd": {
                 "expname": self.expname,
                 "identifier": identifier,
@@ -166,25 +166,22 @@ class Trainer(ABC):
                 "seed": seed,
                 "timestamp_id": self.timestamp_id,
                 "commit": commit_hash,
-                "checkpoint_dir": os.path.join(
-                    run_dir, self.expname, "checkpoints"),
-                "results_dir": os.path.join(
-                    run_dir, self.expname, "results"),
-                "logs_dir": os.path.join(
-                    run_dir, self.expname, "logs", logger_name),
+                "checkpoint_dir": os.path.join(run_dir, self.expname, "checkpoints"),
+                "results_dir": os.path.join(run_dir, self.expname, "results"),
+                "logs_dir": os.path.join(run_dir, self.expname, "logs", logger_name),
             },
             "slurm": slurm,
             "noddp": noddp,
         }
-        
+
         # AMP Scaler
         self.scaler = torch.cuda.amp.GradScaler() if amp else None
         if "SLURM_JOB_ID" in os.environ and "folder" in self.config["slurm"]:
             self.config["slurm"]["job_id"] = os.environ["SLURM_JOB_ID"]
-            self.config["slurm"]["folder"] = self.config["slurm"][
-                "folder"
-            ].replace("%j", self.config["slurm"]["job_id"])
-            
+            self.config["slurm"]["folder"] = self.config["slurm"]["folder"].replace(
+                "%j", self.config["slurm"]["job_id"]
+            )
+
         if isinstance(dataset, list):
             if len(dataset) > 0:
                 self.config["dataset"] = dataset[0]
@@ -216,11 +213,10 @@ class Trainer(ABC):
             # conditional import is necessary for checkpointing
             from ray import tune
             from mdsim.common.hpo_utils import tune_reporter
+
             # sets the hpo checkpoint frequency
             # default is no checkpointing
-            self.hpo_checkpoint_every = self.config["optim"].get(
-                "checkpoint_every", -1
-            )
+            self.hpo_checkpoint_every = self.config["optim"].get("checkpoint_every", -1)
 
         if distutils.is_master():
             print(yaml.dump(self.config, default_flow_style=False))
@@ -237,7 +233,7 @@ class Trainer(ABC):
         self.load_loss()
         self.load_optimizer()
         self.load_extras()
-            
+
     def load_seed_from_config(self):
         # https://pytorch.org/docs/stable/notes/randomness.html
         seed = self.config["cmd"]["seed"]
@@ -253,13 +249,13 @@ class Trainer(ABC):
 
     def load_logger(self):
         self.logger = None
-        if (not self.is_debug 
-            and distutils.is_master() 
-            and not self.is_hpo 
-            and not self.simulate):
-            assert (
-                self.config["logger"] is not None
-            ), "Specify logger in config"
+        if (
+            not self.is_debug
+            and distutils.is_master()
+            and not self.is_hpo
+            and not self.simulate
+        ):
+            assert self.config["logger"] is not None, "Specify logger in config"
 
             logger = self.config["logger"]
             logger_name = logger if isinstance(logger, str) else logger["name"]
@@ -355,7 +351,7 @@ class Trainer(ABC):
         # Compute mean, std of training set labels.
         self.normalizers = {}
         if self.normalizer.get("normalize_labels", False):
-            if "target_mean" in self.normalizer and (not self.no_energy):                
+            if "target_mean" in self.normalizer and (not self.no_energy):
                 self.normalizers["target"] = Normalizer(
                     mean=self.normalizer["target_mean"],
                     std=self.normalizer["target_std"],
@@ -371,9 +367,13 @@ class Trainer(ABC):
                     )
                 else:
                     if not self.no_energy:
-                        raise NotImplementedError('normalization needs to be specified.')
+                        raise NotImplementedError(
+                            "normalization needs to be specified."
+                        )
                     else:
-                        logging.info('<no_energy> flag is <True>. no energy information is used.')
+                        logging.info(
+                            "<no_energy> flag is <True>. no energy information is used."
+                        )
 
     def load_task(self):
         logging.info(f"Loading dataset: {self.config['task']['dataset']}")
@@ -416,7 +416,9 @@ class Trainer(ABC):
                         )
                         self.normalizers["grad_target"].mean.fill_(0)
                     else:
-                        raise NotImplementedError('normalization needs to be specified.')
+                        raise NotImplementedError(
+                            "normalization needs to be specified."
+                        )
 
     def load_model(self):
         # Build model
@@ -424,17 +426,17 @@ class Trainer(ABC):
             logging.info(f"Loading model: {self.config['model']}")
 
         bond_feat_dim = None
-        bond_feat_dim = self.config["model_attributes"].get(
-            "num_gaussians", 50
-        )
+        bond_feat_dim = self.config["model_attributes"].get("num_gaussians", 50)
 
         loader = self.train_loader or self.val_loader or self.test_loader
         self.model = registry.get_model_class(self.config["model"])(
-            loader.dataset[0].x.shape[-1]
-            if loader
-            and hasattr(loader.dataset[0], "x")
-            and loader.dataset[0].x is not None
-            else None,
+            (
+                loader.dataset[0].x.shape[-1]
+                if loader
+                and hasattr(loader.dataset[0], "x")
+                and loader.dataset[0].x is not None
+                else None
+            ),
             bond_feat_dim,
             self.num_targets,
             **self.config["model_attributes"],
@@ -455,9 +457,7 @@ class Trainer(ABC):
             num_gpus=1 if not self.cpu else 0,
         )
         if distutils.initialized() and not self.config["noddp"]:
-            self.model = DistributedDataParallel(
-                self.model, device_ids=[self.device]
-            )
+            self.model = DistributedDataParallel(self.model, device_ids=[self.device])
 
     def load_checkpoint(self, checkpoint_path):
         if not os.path.isfile(checkpoint_path):
@@ -477,17 +477,15 @@ class Trainer(ABC):
         # if trained with ddp and want to load in non-ddp, modify keys from
         # module.module.. -> module..
         first_key = next(iter(checkpoint["state_dict"]))
-        if (
-            not distutils.initialized() or self.config["noddp"]
-        ) and first_key.split(".")[1] == "module":
+        if (not distutils.initialized() or self.config["noddp"]) and first_key.split(
+            "."
+        )[1] == "module":
             # No need for OrderedDict since dictionaries are technically ordered
             # since Python 3.6 and officially ordered since Python 3.7
             new_dict = {k[7:]: v for k, v in checkpoint["state_dict"].items()}
             self.model.load_state_dict(new_dict)
         elif distutils.initialized() and first_key.split(".")[1] != "module":
-            new_dict = {
-                f"module.{k}": v for k, v in checkpoint["state_dict"].items()
-            }
+            new_dict = {f"module.{k}": v for k, v in checkpoint["state_dict"].items()}
             self.model.load_state_dict(new_dict)
         else:
             self.model.load_state_dict(checkpoint["state_dict"])
@@ -503,9 +501,7 @@ class Trainer(ABC):
 
         for key in checkpoint["normalizers"]:
             if key in self.normalizers:
-                self.normalizers[key].load_state_dict(
-                    checkpoint["normalizers"][key]
-                )
+                self.normalizers[key].load_state_dict(checkpoint["normalizers"][key])
             if self.scaler and checkpoint["amp"]:
                 self.scaler.load_state_dict(checkpoint["amp"])
 
@@ -521,9 +517,7 @@ class Trainer(ABC):
             elif loss_name == "l2mae":
                 self.loss_fn[loss] = L2MAELoss()
             else:
-                raise NotImplementedError(
-                    f"Unknown loss function name: {loss_name}"
-                )
+                raise NotImplementedError(f"Unknown loss function name: {loss_name}")
             if distutils.initialized():
                 self.loss_fn[loss] = DDPLoss(self.loss_fn[loss])
 
@@ -593,9 +587,11 @@ class Trainer(ABC):
                         "step": self.step,
                         "state_dict": self.model.state_dict(),
                         "optimizer": self.optimizer.state_dict(),
-                        "scheduler": self.scheduler.scheduler.state_dict()
-                        if self.scheduler.scheduler_type != "Null"
-                        else None,
+                        "scheduler": (
+                            self.scheduler.scheduler.state_dict()
+                            if self.scheduler.scheduler_type != "Null"
+                            else None
+                        ),
                         "normalizers": {
                             key: value.state_dict()
                             for key, value in self.normalizers.items()
@@ -603,9 +599,7 @@ class Trainer(ABC):
                         "config": self.config,
                         "val_metrics": metrics,
                         "ema": self.ema.state_dict() if self.ema else None,
-                        "amp": self.scaler.state_dict()
-                        if self.scaler
-                        else None,
+                        "amp": self.scaler.state_dict() if self.scaler else None,
                     },
                     checkpoint_dir=self.config["cmd"]["checkpoint_dir"],
                     checkpoint_file=checkpoint_file,
@@ -623,9 +617,7 @@ class Trainer(ABC):
                         },
                         "config": self.config,
                         "val_metrics": metrics,
-                        "amp": self.scaler.state_dict()
-                        if self.scaler
-                        else None,
+                        "amp": self.scaler.state_dict() if self.scaler else None,
                     },
                     checkpoint_dir=self.config["cmd"]["checkpoint_dir"],
                     checkpoint_file=checkpoint_file,
@@ -638,15 +630,11 @@ class Trainer(ABC):
         # checkpointing frequency can be adjusted by setting checkpoint_every in steps
         # to checkpoint every time results are communicated to Ray Tune set checkpoint_every=1
         if checkpoint_every != -1 and step % checkpoint_every == 0:
-            with tune.checkpoint_dir(  # noqa: F821
-                step=step
-            ) as checkpoint_dir:
+            with tune.checkpoint_dir(step=step) as checkpoint_dir:  # noqa: F821
                 path = os.path.join(checkpoint_dir, "checkpoint")
                 torch.save(self.save_state(epoch, step, metrics), path)
 
-    def hpo_update(
-        self, epoch, step, train_metrics, val_metrics, test_metrics=None
-    ):
+    def hpo_update(self, epoch, step, train_metrics, val_metrics, test_metrics=None):
         progress = {
             "steps": step,
             "epochs": epoch,
@@ -663,9 +651,7 @@ class Trainer(ABC):
         # report metrics to tune
         tune_reporter(  # noqa: F821
             iters=progress,
-            train_metrics={
-                k: train_metrics[k]["metric"] for k in self.metrics
-            },
+            train_metrics={k: train_metrics[k]["metric"] for k in self.metrics},
             val_metrics={k: val_metrics[k]["metric"] for k in val_metrics},
             test_metrics=test_metrics,
         )
@@ -717,43 +703,26 @@ class Trainer(ABC):
 
             if self.normalizers is not None:
                 if not self.no_energy:
-                    out["energy"] = self.normalizers["target"].denorm(
-                        out["energy"]
-                    )
-                out["forces"] = self.normalizers["grad_target"].denorm(
-                    out["forces"]
-                )
+                    out["energy"] = self.normalizers["target"].denorm(out["energy"])
+                out["forces"] = self.normalizers["grad_target"].denorm(out["forces"])
             if per_image:
                 systemids = [str(i) for i in batch_list[0].fid]
                 predictions["id"].extend(systemids)
-                predictions["energy"].extend(
-                    out["energy"].to(torch.float16).tolist()
-                )
-                batch_natoms = torch.cat(
-                    [batch.natoms for batch in batch_list]
-                )
+                predictions["energy"].extend(out["energy"].to(torch.float16).tolist())
+                batch_natoms = torch.cat([batch.natoms for batch in batch_list])
                 batch_fixed = torch.cat([batch.fixed for batch in batch_list])
                 forces = out["forces"].cpu().detach().to(torch.float16)
                 per_image_forces = torch.split(forces, batch_natoms.tolist())
-                per_image_forces = [
-                    force.numpy() for force in per_image_forces
-                ]
+                per_image_forces = [force.numpy() for force in per_image_forces]
                 # evalAI only requires forces on free atoms
                 if results_file is not None:
-                    _per_image_fixed = torch.split(
-                        batch_fixed, batch_natoms.tolist()
-                    )
+                    _per_image_fixed = torch.split(batch_fixed, batch_natoms.tolist())
                     _per_image_free_forces = [
                         force[(fixed == 0).tolist()]
-                        for force, fixed in zip(
-                            per_image_forces, _per_image_fixed
-                        )
+                        for force, fixed in zip(per_image_forces, _per_image_fixed)
                     ]
                     _chunk_idx = np.array(
-                        [
-                            free_force.shape[0]
-                            for free_force in _per_image_free_forces
-                        ]
+                        [free_force.shape[0] for free_force in _per_image_free_forces]
                     )
                     per_image_forces = _per_image_free_forces
                     predictions["chunk_idx"].extend(_chunk_idx)
@@ -775,7 +744,7 @@ class Trainer(ABC):
             self.ema.restore()
 
         return predictions
-    
+
     def update_best(
         self,
         primary_metric,
@@ -800,12 +769,8 @@ class Trainer(ABC):
                 )
 
     def train(self, disable_eval_tqdm=False):
-        eval_every = self.config["optim"].get(
-            "eval_every", len(self.train_loader)
-        )
-        checkpoint_every = self.config["optim"].get(
-            "checkpoint_every", eval_every
-        )
+        eval_every = self.config["optim"].get("eval_every", len(self.train_loader))
+        checkpoint_every = self.config["optim"].get("checkpoint_every", eval_every)
         primary_metric = self.config["task"].get(
             "primary_metric", self.evaluator.task_primary_metric[self.name]
         )
@@ -815,14 +780,11 @@ class Trainer(ABC):
         # Calculate start_epoch from step instead of loading the epoch number
         # to prevent inconsistencies due to different batch size in checkpoint.
         start_epoch = self.step // len(self.train_loader)
-        for epoch_int in range(
-            start_epoch, self.config["optim"]["max_epochs"]
-        ):
+        for epoch_int in range(start_epoch, self.config["optim"]["max_epochs"]):
             epoch_start_time = time.time()
             self.train_sampler.set_epoch(epoch_int)
             skip_steps = self.step % len(self.train_loader)
             train_loader_iter = iter(self.train_loader)
-
             for i in range(skip_steps, len(self.train_loader)):
                 self.epoch = epoch_int + (i + 1) / len(self.train_loader)
                 self.step = epoch_int * len(self.train_loader) + i + 1
@@ -857,16 +819,15 @@ class Trainer(ABC):
                         "lr": self.scheduler.get_lr(),
                         "epoch": self.epoch,
                         "step": self.step,
-                    })
-                
+                    }
+                )
+
                 if (
                     self.step % self.config["cmd"]["print_every"] == 0
                     and distutils.is_master()
                     and not self.is_hpo
                 ):
-                    log_str = [
-                        "{}: {:.2e}".format(k, v) for k, v in log_dict.items()
-                    ]
+                    log_str = ["{}: {:.2e}".format(k, v) for k, v in log_dict.items()]
                     logging.info(", ".join(log_str))
                     self.metrics = {}
 
@@ -877,13 +838,8 @@ class Trainer(ABC):
                             split="train",
                         )
 
-                if (
-                    checkpoint_every != -1
-                    and self.step % checkpoint_every == 0
-                ):
-                    self.save(
-                        checkpoint_file="checkpoint.pt", training_state=True
-                    )
+                if checkpoint_every != -1 and self.step % checkpoint_every == 0:
+                    self.save(checkpoint_file="checkpoint.pt", training_state=True)
 
                 # Evaluate on val set every `eval_every` iterations.
                 if self.step % eval_every == 0:
@@ -892,18 +848,17 @@ class Trainer(ABC):
                             split="val",
                             disable_tqdm=disable_eval_tqdm,
                         )
-                        
+
                         self.update_best(
                             primary_metric,
                             val_metrics,
-                            disable_eval_tqdm=disable_eval_tqdm)
-                        
+                            disable_eval_tqdm=disable_eval_tqdm,
+                        )
+
                         if self.is_hpo:
                             self.hpo_update(
-                                self.epoch,
-                                self.step,
-                                self.metrics,
-                                val_metrics)
+                                self.epoch, self.step, self.metrics, val_metrics
+                            )
 
                     if self.config["task"].get("eval_relaxations", False):
                         if "relax_dataset" not in self.config["task"]:
@@ -912,8 +867,11 @@ class Trainer(ABC):
                             )
                         else:
                             self.run_relaxations()
-                                 
-                if self.scheduler.scheduler_type in ["ReduceLROnPlateau", "ExponentialLR"]:
+
+                if self.scheduler.scheduler_type in [
+                    "ReduceLROnPlateau",
+                    "ExponentialLR",
+                ]:
                     if self.step % eval_every == 0:
                         self.scheduler.step(
                             metrics=val_metrics[primary_metric]["metric"],
@@ -925,18 +883,18 @@ class Trainer(ABC):
 
             if checkpoint_every == -1:
                 self.save(checkpoint_file="checkpoint.pt", training_state=True)
-                
+
             if self.early_stopping_lr is not None:
                 if self.scheduler.get_lr() <= self.early_stopping_lr:
                     logging.info("Early stopping due to low learning rate")
                     break
-            
+
             if self.early_stopping_time is not None:
                 self.elapsed += time.time() - epoch_start_time
                 if self.elapsed >= self.early_stopping_time:
                     logging.info("Early stopping due to time limit")
-                    break    
-            
+                    break
+
         self.train_dataset.close_db()
         if self.config.get("val_dataset", False):
             self.val_dataset.close_db()
@@ -960,7 +918,8 @@ class Trainer(ABC):
 
         loader = self.val_loader if split == "val" else self.test_loader
         batch_size = self.config["optim"].get(
-                        "eval_batch_size", self.config["optim"]["batch_size"])
+            "eval_batch_size", self.config["optim"]["batch_size"]
+        )
         if max_points is None:
             max_points = len(loader) * batch_size
         for i, batch in tqdm(
@@ -968,7 +927,7 @@ class Trainer(ABC):
             position=rank,
             desc="device {}".format(rank),
             disable=disable_tqdm,
-            total=np.ceil(max_points // batch_size)
+            total=np.ceil(max_points // batch_size),
         ):
             # Forward.
             with torch.cuda.amp.autocast(enabled=self.scaler is not None):
@@ -978,10 +937,10 @@ class Trainer(ABC):
             # Compute metrics.
             metrics = self._compute_metrics(out, batch, evaluator, metrics)
             metrics = evaluator.update("loss", loss.item(), metrics)
-            
-            if max_points and (i+1) * batch_size >= max_points:
+
+            if max_points and (i + 1) * batch_size >= max_points:
                 break
-            
+
         aggregated_metrics = {}
         for k in metrics:
             aggregated_metrics[k] = {
@@ -1031,8 +990,8 @@ class Trainer(ABC):
         }
 
         if self.config["model_attributes"].get("regress_forces", True):
-            out["forces"] = out_forces  
-        
+            out["forces"] = out_forces
+
         return out
 
     def _compute_loss(self, out, batch_list):
@@ -1056,22 +1015,15 @@ class Trainer(ABC):
                 [batch.force.to(self.device) for batch in batch_list], dim=0
             )
             if self.normalizer.get("normalize_labels", False):
-                force_target = self.normalizers["grad_target"].norm(
-                    force_target
-                )
+                force_target = self.normalizers["grad_target"].norm(force_target)
 
-            tag_specific_weights = self.config["task"].get(
-                "tag_specific_weights", []
-            )
+            tag_specific_weights = self.config["task"].get("tag_specific_weights", [])
             if tag_specific_weights != []:
                 # handle tag specific weights as introduced in forcenet
                 assert len(tag_specific_weights) == 3
 
                 batch_tags = torch.cat(
-                    [
-                        batch.tags.float().to(self.device)
-                        for batch in batch_list
-                    ],
+                    [batch.tags.float().to(self.device) for batch in batch_list],
                     dim=0,
                 )
                 weight = torch.zeros_like(batch_tags)
@@ -1104,21 +1056,18 @@ class Trainer(ABC):
                     mask = fixed == 0
                     loss.append(
                         force_mult
-                        * self.loss_fn["force"](
-                            out["forces"][mask], force_target[mask]
-                        )
+                        * self.loss_fn["force"](out["forces"][mask], force_target[mask])
                     )
                 else:
                     loss.append(
-                        force_mult
-                        * self.loss_fn["force"](out["forces"], force_target)
+                        force_mult * self.loss_fn["force"](out["forces"], force_target)
                     )
         # Sanity check to make sure the compute graph is correct.
         for lc in loss:
-            assert hasattr(lc, "grad_fn")           
-                
+            assert hasattr(lc, "grad_fn")
+
         loss = sum(loss)
-        
+
         return loss
 
     def _compute_metrics(self, out, batch_list, evaluator, metrics={}):
@@ -1127,21 +1076,25 @@ class Trainer(ABC):
         )
 
         target = {
-            "forces": torch.cat([batch.force.to(self.device) for batch in batch_list], dim=0),
+            "forces": torch.cat(
+                [batch.force.to(self.device) for batch in batch_list], dim=0
+            ),
             "natoms": natoms,
         }
-        
+
         if not self.no_energy:
-            target.update({
-                "energy": torch.cat([batch.y.to(self.device) for batch in batch_list], dim=0)
-            })
+            target.update(
+                {
+                    "energy": torch.cat(
+                        [batch.y.to(self.device) for batch in batch_list], dim=0
+                    )
+                }
+            )
 
         out["natoms"] = natoms
 
         if self.config["task"].get("eval_on_free_atoms", True):
-            fixed = torch.cat(
-                [batch.fixed.to(self.device) for batch in batch_list]
-            )
+            fixed = torch.cat([batch.fixed.to(self.device) for batch in batch_list])
             mask = fixed == 0
             out["forces"] = out["forces"][mask]
             target["forces"] = target["forces"][mask]
@@ -1149,7 +1102,7 @@ class Trainer(ABC):
             s_idx = 0
             natoms_free = []
             for natoms in target["natoms"]:
-                natoms_free.append(torch.sum(mask[s_idx:s_idx + natoms]).item())
+                natoms_free.append(torch.sum(mask[s_idx : s_idx + natoms]).item())
                 s_idx += natoms
             target["natoms"] = torch.LongTensor(natoms_free).to(self.device)
             out["natoms"] = torch.LongTensor(natoms_free).to(self.device)
@@ -1186,9 +1139,7 @@ class Trainer(ABC):
                 max_norm=self.clip_grad_norm,
             )
             if self.logger is not None:
-                self.logger.log(
-                    {"grad_norm": grad_norm}, step=self.step, split="train"
-                )
+                self.logger.log({"grad_norm": grad_norm}, step=self.step, split="train")
         if self.scaler:
             self.scaler.step(self.optimizer)
             self.scaler.update()
@@ -1236,13 +1187,9 @@ class Trainer(ABC):
             gather_results["ids"] = np.array(gather_results["ids"])[idx]
             for k in keys:
                 if k == "forces":
-                    gather_results[k] = np.concatenate(
-                        np.array(gather_results[k])[idx]
-                    )
+                    gather_results[k] = np.concatenate(np.array(gather_results[k])[idx])
                 elif k == "chunk_idx":
-                    gather_results[k] = np.cumsum(
-                        np.array(gather_results[k])[idx]
-                    )[:-1]
+                    gather_results[k] = np.cumsum(np.array(gather_results[k])[idx])[:-1]
                 else:
                     gather_results[k] = np.array(gather_results[k])[idx]
 

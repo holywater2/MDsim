@@ -1,0 +1,19 @@
+includes:
+- configs/water/base_no_amsgrad.yml
+
+model:
+  name: pme_schnet
+  hidden_channels: 64
+  num_filters: 64
+  num_interactions: 3
+  num_gaussians: 25
+  cutoff: 6.0
+  use_pbc: True
+  otf_graph: True
+
+  mesh_cutoff: 3.0
+  mesh_conv_layers: 3
+  mesh_partition: 10
+  mesh_conv_modes: 5
+
+  using_ff: False

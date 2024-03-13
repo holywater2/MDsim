@@ -29,6 +29,11 @@ from mdsim.md.ase_utils import data_to_atoms, OCPCalculator, Simulator
 from mdsim.common.utils import load_config
 from mdsim.datasets.lmdb_dataset import LmdbDataset
 
+import warnings
+
+warnings.simplefilter("ignore", UserWarning)
+
+
 def seed_everywhere(seed):
     random.seed(seed)
     np.random.seed(seed)
