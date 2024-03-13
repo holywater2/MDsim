@@ -19,7 +19,7 @@ from mdsim.common.utils import (
 from mdsim.models.pme_utils import *
 
 
-@registry.register_model("pme_schnet_v3")
+@registry.register_model("pme_schnet_sh")
 class PmeSchNetWrap(SchNet):
     r"""Wrapper around the continuous-filter convolutional neural network SchNet from the
     `"SchNet: A Continuous-filter Convolutional Neural Network for Modeling
@@ -81,6 +81,7 @@ class PmeSchNetWrap(SchNet):
         radial_embed_size=64,
         radial_hidden_size=128,
         num_sh_gcn_layers=3,
+        mesh_hidden_channel=16,
         *args,
         **kwargs,
     ):
@@ -101,6 +102,7 @@ class PmeSchNetWrap(SchNet):
         self.radial_embed_size = radial_embed_size
         self.radial_hidden_size = radial_hidden_size
         self.num_sh_gcn_layers = num_sh_gcn_layers
+        self.mesh_hidden_channel = mesh_hidden_channel
 
         super(PmeSchNetWrap, self).__init__(
             hidden_channels=hidden_channels,
@@ -133,7 +135,7 @@ class PmeSchNetWrap(SchNet):
                 for i in range(num_sh_gcn_layers)
             ]
         )
-        self.act = NormActivation(self.irreps_feat)
+        self.act_sh = NormActivation(self.irreps_feat)
 
         self.atom_to_mesh_gcn = SphericalGCN(
             self.irreps_feat,
@@ -149,7 +151,7 @@ class PmeSchNetWrap(SchNet):
         self.act_mesh = NormActivation(f"{self.mesh_channel}x0e")
 
         self.mesh_to_atom_gcn = SphericalGCN(
-            f"{self.hidden_channels}x0e",
+            f"{self.mesh_hidden_channel}x0e",
             f"0e",
             self.irreps_sh,
             radial_embed_size,
@@ -164,8 +166,8 @@ class PmeSchNetWrap(SchNet):
             modes1=mesh_conv_modes,
             modes2=mesh_conv_modes,
             modes3=mesh_conv_modes,
-            width=hidden_channels,
-            num_fourier_time=hidden_channels,
+            width=mesh_hidden_channel,
+            num_fourier_time=mesh_channel,
             padding=0,
             num_layers=mesh_conv_layers,
             using_ff=using_ff,
@@ -233,17 +235,21 @@ class PmeSchNetWrap(SchNet):
             h2 = self.embedding_sh(z)
             for i, gcn in enumerate(self.SphericalGCNs):
                 h2 = gcn(
-                    edge_index, feat, edge_feat, edge_embed, dim_size=data.pos.size(0)
+                    edge_index, h2, edge_feat, edge_embed, dim_size=data.pos.size(0)
                 )
                 if i != self.num_sh_gcn_layers - 1:
-                    feat = self.act(h2)
+                    h2 = self.act_sh(h2)
 
             # 여기서 부터
             mesh = init_particle_mesh(data.cell, self.mesh_partition, self.use_pbc)
-            mesh_feat = init_potential(
-                data.pos, data.atomic_numbers, data.batch, mesh, self.use_pbc, n=16
+            # mesh_feat = init_potential(
+            #     data.pos, data.atomic_numbers, data.batch, mesh, self.use_pbc, n=16
+            # )
+            mesh_feat = torch.zeros(
+                mesh["meshgrid_flat"].size(0),
+                self.mesh_channel,
+                device=data.pos.device,
             )
-            # mesh_feat = self.mesh_embedding(mesh_feat.reshape(-1, 16))
 
             mesh_dst, atom_src, edge_vec = radius_and_edge_atom_to_mesh(
                 data.pos, data.batch, mesh, self.mesh_cutoff, self.use_pbc
@@ -266,44 +272,35 @@ class PmeSchNetWrap(SchNet):
                 cutoff=False,
             ).mul(self.radial_embed_size**0.5)
 
-            (
-                atom_with_mesh,
-                atom_with_mesh_batch,
-                atom_with_mesh_dst,
-                atom_with_mesh_src,
-                edge_vec,
-            ) = process_atom_to_mesh(
-                data.pos, data.batch, mesh, self.mesh_cutoff, self.use_pbc
+            mesh_feat = self.atom_to_mesh_gcn.forward(
+                (atom_src, mesh_dst),
+                h2,
+                atm_edge_feat,
+                atm_edge_embed,
+                dim_size=mesh["meshgrid_flat"].size(0),
             )
 
-            h_with_mesh = torch.cat([h2, mesh_feat], dim=0)
-            atom_with_mesh_dist = torch.norm(edge_vec, dim=1)
-            atom_with_mesh_edge_attr = self.distance_expansion(atom_with_mesh_dist)
-            h_with_mesh = self.mesh_interaction(
-                h_with_mesh,
-                torch.vstack([atom_with_mesh_src, atom_with_mesh_dst]),
-                atom_with_mesh_dist,
-                atom_with_mesh_edge_attr,
+            mesh_feat = self.act_mesh(mesh_feat)
+
+            mesh_feat = mesh_feat.reshape(
+                mesh["meshgrid"].shape[0],
+                self.mesh_partition,
+                self.mesh_partition,
+                self.mesh_partition,
+                -1,
             )
-            mesh_feat = h_with_mesh[h2.shape[0] :]
-            nd = mesh["meshgrid"].shape[1]
-            mesh_feat = mesh_feat.reshape(mesh["meshgrid"].shape[0], nd, nd, nd, -1)
+
             mesh_grid = get_grid(mesh_feat.shape, mesh_feat.device)
             mesh_feat = self.pmeconv(mesh_feat, mesh_grid)
             mesh_feat = mesh_feat.reshape(-1, mesh_feat.shape[-1])
 
-            h_with_mesh = torch.cat([h2, mesh_feat], dim=0)
-            h_with_mesh = self.mesh_interaction2(
-                h_with_mesh,
-                torch.vstack([atom_with_mesh_dst, atom_with_mesh_src]),
-                atom_with_mesh_dist,
-                atom_with_mesh_edge_attr,
+            h2 = self.mesh_to_atom_gcn.forward(
+                (mesh_dst, atom_src),
+                mesh_feat,
+                atm_edge_feat,
+                atm_edge_embed,
+                dim_size=data.pos.size(0),
             )
-
-            h2 = h_with_mesh[: h2.shape[0]]
-            h2 = self.lin1_fm(h2)
-            h2 = self.act(h2)
-            h2 = self.lin2_fm(h2)
 
             h = h + h2
 

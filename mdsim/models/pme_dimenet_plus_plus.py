@@ -30,6 +30,8 @@ try:
 except ImportError:
     sym = None
 
+from mdsim.models.pme_utils import *
+
 
 class Envelope(torch.nn.Module):
     def __init__(self, exponent):
@@ -338,7 +340,7 @@ class DimeNetPlusPlus(torch.nn.Module):
         raise NotImplementedError
 
 
-@registry.register_model("dimenetplusplus")
+@registry.register_model("dimenetplusplus_sh")
 class DimeNetPlusPlusWrap(DimeNetPlusPlus):
     def __init__(
         self,
@@ -360,12 +362,40 @@ class DimeNetPlusPlusWrap(DimeNetPlusPlus):
         num_before_skip=1,
         num_after_skip=2,
         num_output_layers=3,
+        mesh_cutoff=10.0,
+        mesh_conv_layers=3,
+        mesh_partition=20,
+        mesh_conv_modes=10,
+        mesh_channel=32,
+        mnum_spherical=3,
+        mnum_radial=16,
+        num_radial_layer=2,
+        radial_embed_size=64,
+        radial_hidden_size=128,
+        num_sh_gcn_layers=3,
+        mesh_hidden_channel=16,
+        using_ff=False,
+        *args,
+        **kwargs,
     ):
         self.num_targets = num_targets
         self.regress_forces = regress_forces
         self.use_pbc = use_pbc
         self.cutoff = cutoff
         self.otf_graph = otf_graph
+
+        self.mesh_channel = mesh_channel
+        self.mesh_partition = mesh_partition
+        self.mesh_cutoff = mesh_cutoff
+
+        self.mnum_radial = mnum_radial
+        self.mnum_spherical = mnum_spherical
+
+        self.num_radial_layer = num_radial_layer
+        self.radial_embed_size = radial_embed_size
+        self.radial_hidden_size = radial_hidden_size
+        self.num_sh_gcn_layers = num_sh_gcn_layers
+        self.mesh_hidden_channel = mesh_hidden_channel
 
         super(DimeNetPlusPlusWrap, self).__init__(
             hidden_channels=hidden_channels,
@@ -381,6 +411,64 @@ class DimeNetPlusPlusWrap(DimeNetPlusPlus):
             num_before_skip=num_before_skip,
             num_after_skip=num_after_skip,
             num_output_layers=num_output_layers,
+        )
+
+        # fm stands for "for mesh" (sorry for lazy naming)
+        self.embedding_sh = nn.Embedding(100, self.mnum_radial)
+        self.irreps_sh = o3.Irreps.spherical_harmonics(self.num_spherical, p=1)
+        self.irreps_feat = (self.irreps_sh * self.mnum_radial).sort().irreps.simplify()
+
+        self.SphericalGCNs = nn.ModuleList(
+            [
+                SphericalGCN(
+                    (f"{mnum_radial}x0e" if i == 0 else self.irreps_feat),
+                    self.irreps_feat,
+                    self.irreps_sh,
+                    radial_embed_size,
+                    num_radial_layer,
+                    radial_hidden_size,
+                    is_fc=True,
+                    **kwargs,
+                )
+                for i in range(num_sh_gcn_layers)
+            ]
+        )
+        self.act_sh = NormActivation(self.irreps_feat)
+
+        self.atom_to_mesh_gcn = SphericalGCN(
+            self.irreps_feat,
+            f"{self.mesh_channel}x0e",
+            self.irreps_sh,
+            radial_embed_size,
+            num_radial_layer,
+            radial_hidden_size,
+            is_fc=True,
+            use_sc=False,
+            **kwargs,
+        )
+        self.act_mesh = NormActivation(f"{self.mesh_channel}x0e")
+
+        self.mesh_to_atom_gcn = SphericalGCN(
+            f"{self.mesh_hidden_channel}x0e",
+            f"0e",
+            self.irreps_sh,
+            radial_embed_size,
+            num_radial_layer,
+            radial_hidden_size,
+            is_fc=True,
+            use_sc=False,
+            **kwargs,
+        )
+
+        self.pmeconv = PMEConv(
+            modes1=mesh_conv_modes,
+            modes2=mesh_conv_modes,
+            modes3=mesh_conv_modes,
+            width=mesh_hidden_channel,
+            num_fourier_time=mesh_channel,
+            padding=0,
+            num_layers=mesh_conv_layers,
+            using_ff=using_ff,
         )
 
     @conditional_grad(torch.enable_grad())
@@ -455,6 +543,95 @@ class DimeNetPlusPlusWrap(DimeNetPlusPlus):
             P += output_block(x, rbf, i, num_nodes=pos.size(0))
 
         energy = P.sum(dim=0) if batch is None else scatter(P, batch, dim=0)
+
+        edge_index = radius_graph(data.pos, self.cutoff, batch, loop=False)
+        src, dst = edge_index
+        edge_vec = data.pos[src] - data.pos[dst]
+        edge_len = edge_vec.norm(dim=-1) + 1e-8
+        edge_feat = o3.spherical_harmonics(
+            list(range(self.mnum_spherical + 1)),
+            edge_vec / edge_len[..., None],
+            normalize=False,
+            normalization="integral",
+        )
+        edge_embed = soft_one_hot_linspace(
+            edge_len,
+            start=0.0,
+            end=self.cutoff,
+            number=self.radial_embed_size,
+            basis="gaussian",
+            cutoff=False,
+        ).mul(self.radial_embed_size**0.5)
+
+        h2 = self.embedding_sh(z)
+        for i, gcn in enumerate(self.SphericalGCNs):
+            h2 = gcn(edge_index, h2, edge_feat, edge_embed, dim_size=data.pos.size(0))
+            if i != self.num_sh_gcn_layers - 1:
+                h2 = self.act_sh(h2)
+
+        # 여기서 부터
+        mesh = init_particle_mesh(data.cell, self.mesh_partition, self.use_pbc)
+        # mesh_feat = init_potential(
+        #     data.pos, data.atomic_numbers, data.batch, mesh, self.use_pbc, n=16
+        # )
+        mesh_feat = torch.zeros(
+            mesh["meshgrid_flat"].size(0),
+            self.mesh_channel,
+            device=data.pos.device,
+        )
+
+        mesh_dst, atom_src, edge_vec = radius_and_edge_atom_to_mesh(
+            data.pos, data.batch, mesh, self.mesh_cutoff, self.use_pbc
+        )
+
+        # atm stands for atom to mesh
+        atm_len = torch.norm(edge_vec, dim=-1) + 1e-8
+        atm_edge_feat = o3.spherical_harmonics(
+            list(range(self.mnum_spherical + 1)),
+            edge_vec / (atm_len[..., None] + 1e-8),
+            normalize=False,
+            normalization="integral",
+        )
+        atm_edge_embed = soft_one_hot_linspace(
+            atm_len,
+            start=0.0,
+            end=self.cutoff,
+            number=self.radial_embed_size,
+            basis="gaussian",
+            cutoff=False,
+        ).mul(self.radial_embed_size**0.5)
+
+        mesh_feat = self.atom_to_mesh_gcn.forward(
+            (atom_src, mesh_dst),
+            h2,
+            atm_edge_feat,
+            atm_edge_embed,
+            dim_size=mesh["meshgrid_flat"].size(0),
+        )
+
+        mesh_feat = self.act_mesh(mesh_feat)
+
+        mesh_feat = mesh_feat.reshape(
+            mesh["meshgrid"].shape[0],
+            self.mesh_partition,
+            self.mesh_partition,
+            self.mesh_partition,
+            -1,
+        )
+
+        mesh_grid = get_grid(mesh_feat.shape, mesh_feat.device)
+        mesh_feat = self.pmeconv(mesh_feat, mesh_grid)
+        mesh_feat = mesh_feat.reshape(-1, mesh_feat.shape[-1])
+
+        h2 = self.mesh_to_atom_gcn.forward(
+            (mesh_dst, atom_src),
+            mesh_feat,
+            atm_edge_feat,
+            atm_edge_embed,
+            dim_size=data.pos.size(0),
+        )
+
+        energy += h2
 
         return energy
 
