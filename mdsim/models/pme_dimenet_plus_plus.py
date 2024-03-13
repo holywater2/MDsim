@@ -415,7 +415,7 @@ class DimeNetPlusPlusWrap(DimeNetPlusPlus):
 
         # fm stands for "for mesh" (sorry for lazy naming)
         self.embedding_sh = nn.Embedding(100, self.mnum_radial)
-        self.irreps_sh = o3.Irreps.spherical_harmonics(self.num_spherical, p=1)
+        self.irreps_sh = o3.Irreps.spherical_harmonics(self.mnum_spherical, p=1)
         self.irreps_feat = (self.irreps_sh * self.mnum_radial).sort().irreps.simplify()
 
         self.SphericalGCNs = nn.ModuleList(
