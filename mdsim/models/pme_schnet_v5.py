@@ -19,7 +19,7 @@ from mdsim.common.utils import (
 from mdsim.models.pme_utils import *
 
 
-@registry.register_model("pme_schnet_v3")
+@registry.register_model("pme_schnet_v5")
 class PmeSchNetWrap(SchNet):
     r"""Wrapper around the continuous-filter convolutional neural network SchNet from the
     `"SchNet: A Continuous-filter Convolutional Neural Network for Modeling
@@ -72,6 +72,7 @@ class PmeSchNetWrap(SchNet):
         mesh_conv_layers=3,
         mesh_partition=20,
         mesh_conv_modes=10,
+        mesh_conv_width=20,
         using_ff=True,
         readout="add",
     ):
@@ -82,6 +83,8 @@ class PmeSchNetWrap(SchNet):
         self.otf_graph = otf_graph
         self.mesh_partition = mesh_partition
         self.mesh_cutoff = mesh_cutoff
+        mesh_channel = hidden_channels
+        self.mesh_channel = mesh_channel
 
         super(PmeSchNetWrap, self).__init__(
             hidden_channels=hidden_channels,
@@ -93,38 +96,40 @@ class PmeSchNetWrap(SchNet):
         )
 
         # fm stands for "for mesh" (sorry for lazy naming)
-        self.embedding_fm = Embedding(100, hidden_channels)
-
-        self.interactions_fm = ModuleList()
-        for _ in range(3):
-            block = InteractionBlock(
-                hidden_channels, num_gaussians, num_filters, cutoff
-            )
-            self.interactions_fm.append(block)
 
         self.mesh_interaction = InteractionBlock(
-            hidden_channels, num_gaussians, num_filters, cutoff
+            mesh_channel, num_gaussians, num_filters, cutoff
         )
 
         self.mesh_interaction2 = InteractionBlock(
-            hidden_channels, num_gaussians, num_filters, cutoff
+            mesh_channel, num_gaussians, num_filters, cutoff
         )
 
-        self.mesh_embedding = nn.Linear(16, hidden_channels)
+        # self.pmeconv = PMEConv(
+        #     modes1=mesh_conv_modes,
+        #     modes2=mesh_conv_modes,
+        #     modes3=mesh_conv_modes,
+        #     width=mesh_channel,
+        #     num_fourier_time=mesh_channel,
+        #     padding=0,
+        #     num_layers=mesh_conv_layers,
+        #     using_ff=using_ff,
+        # )
 
-        self.lin1_fm = Linear(hidden_channels, hidden_channels // 2)
-        self.lin2_fm = Linear(hidden_channels // 2, 1)
-
-        self.pmeconv = PMEConv(
-            modes1=mesh_conv_modes,
-            modes2=mesh_conv_modes,
-            modes3=mesh_conv_modes,
-            width=hidden_channels,
-            num_fourier_time=hidden_channels,
-            padding=0,
-            num_layers=mesh_conv_layers,
-            using_ff=using_ff,
-        )
+        self.pmeconvs = ModuleList()
+        for _ in range(num_interactions):
+            self.pmeconvs.append(
+                PMEConv(
+                    modes1=mesh_conv_modes,
+                    modes2=mesh_conv_modes,
+                    modes3=mesh_conv_modes,
+                    width=mesh_conv_width,
+                    num_fourier_time=mesh_channel,
+                    padding=0,
+                    num_layers=mesh_conv_layers,
+                    using_ff=using_ff,
+                )
+            )
 
     @conditional_grad(torch.enable_grad())
     def _forward(self, data):
@@ -155,13 +160,14 @@ class PmeSchNetWrap(SchNet):
             edge_weight = out["distances"]
             edge_attr = self.distance_expansion(edge_weight)
 
-            h2 = self.embedding_fm(z)
-            for interaction in self.interactions_fm:
-                h2 = h2 + interaction(h2, edge_index, edge_weight, edge_attr)
+            h = self.embedding(z)
 
             mesh = init_particle_mesh(data.cell, self.mesh_partition, self.use_pbc)
+            mesh_h3 = torch.prod(mesh["mesh_length"], dim=1).unsqueeze(1)
+
             (
                 atom_with_mesh,
+                atom_with_super_mesh,
                 atom_with_mesh_batch,
                 atom_with_mesh_dst,
                 atom_with_mesh_src,
@@ -170,45 +176,56 @@ class PmeSchNetWrap(SchNet):
                 data.pos, data.batch, mesh, self.mesh_cutoff, self.use_pbc
             )
 
-            h_with_mesh = torch.cat([h2, mesh_feat], dim=0)
-            atom_with_mesh_dist = torch.norm(edge_vec, dim=1)
-            atom_with_mesh_edge_attr = self.distance_expansion(atom_with_mesh_dist)
-            h_with_mesh = self.mesh_interaction(
-                h_with_mesh,
-                torch.vstack([atom_with_mesh_src, atom_with_mesh_dst]),
-                atom_with_mesh_dist,
-                atom_with_mesh_edge_attr,
-            )
-            mesh_feat = h_with_mesh[h2.shape[0] :]
-            nd = mesh["meshgrid"].shape[1]
-            mesh_feat = mesh_feat.reshape(mesh["meshgrid"].shape[0], nd, nd, nd, -1)
-            mesh_grid = get_grid(mesh_feat.shape, mesh_feat.device)
-            mesh_feat = self.pmeconv(mesh_feat, mesh_grid)
-            mesh_feat = mesh_feat.reshape(-1, mesh_feat.shape[-1])
+            for i in range(self.num_interactions):
+                mesh_charge = h
+                mesh_feat = mesh_feat = init_feat(
+                    data.pos,
+                    data.atomic_numbers,
+                    data.batch,
+                    mesh,
+                    self.use_pbc,
+                    n=self.mesh_channel,
+                    feat_type="zeros",
+                )
 
-            h_with_mesh = torch.cat([h2, mesh_feat], dim=0)
-            h_with_mesh = self.mesh_interaction2(
-                h_with_mesh,
-                torch.vstack([atom_with_mesh_dst, atom_with_mesh_src]),
-                atom_with_mesh_dist,
-                atom_with_mesh_edge_attr,
-            )
+                h_with_mesh = torch.cat([mesh_charge, mesh_feat], dim=0)
+                atom_with_mesh_dist = torch.norm(edge_vec, dim=1)
+                atom_with_mesh_edge_attr = self.distance_expansion(atom_with_mesh_dist)
+                h_with_mesh = self.mesh_interaction(
+                    h_with_mesh,
+                    torch.vstack([atom_with_mesh_src, atom_with_mesh_dst]),
+                    atom_with_mesh_dist,
+                    atom_with_mesh_edge_attr,
+                )
+                h_with_mesh *= 1 / mesh_h3[atom_with_mesh_batch]
+                mesh_feat = h_with_mesh[mesh_charge.shape[0] :]
+                nd = mesh["meshgrid"].shape[1]
+                mesh_feat = mesh_feat.reshape(mesh["meshgrid"].shape[0], nd, nd, nd, -1)
+                mesh_grid = get_grid(mesh_feat.shape, mesh_feat.device)
+                mesh_feat = self.pmeconvs[i](mesh_feat, mesh_grid)
+                mesh_feat = mesh_feat.reshape(-1, mesh_feat.shape[-1])
 
-            h2 = h_with_mesh[: h2.shape[0]]
-            h2 = self.lin1_fm(h2)
-            h2 = self.act(h2)
-            h2 = self.lin2_fm(h2)
+                h_with_mesh = torch.cat([mesh_charge, mesh_feat], dim=0)
+                h_with_mesh = self.mesh_interaction2(
+                    h_with_mesh,
+                    torch.vstack([atom_with_mesh_dst, atom_with_mesh_src]),
+                    atom_with_mesh_dist,
+                    atom_with_mesh_edge_attr,
+                )
 
-            h = self.embedding(z)
+                mesh_charge = (
+                    h_with_mesh[: mesh_charge.shape[0]] * mesh_charge * mesh_h3[batch]
+                )
 
-            for interaction in self.interactions:
-                h = h + interaction(h, edge_index, edge_weight, edge_attr)
+                h = (
+                    h
+                    + self.interactions[i](h, edge_index, edge_weight, edge_attr)
+                    + mesh_charge
+                )
 
             h = self.lin1(h)
             h = self.act(h)
             h = self.lin2(h)
-
-            h = h + h2
 
             batch = torch.zeros_like(z) if batch is None else batch
             energy = scatter(h, batch, dim=0, reduce=self.readout)

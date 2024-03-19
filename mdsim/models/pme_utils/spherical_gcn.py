@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 from torch_scatter import scatter
 
+import math
+
 from e3nn import o3
 from e3nn.nn import FullyConnectedNet, Extract, Activation
 
@@ -190,3 +192,151 @@ class SphericalGCN(nn.Module):
         if self.use_sc:
             out = out + self.sc(node_feat)
         return out
+
+
+class BroadcastGTOTensor(nn.Module):
+    r"""
+    Broadcast between spherical tensors of the Gaussian Type Orbitals (GTOs):
+
+    .. math::
+        \{a_{clm}, 1\le c\le c_{max}, 0\le\ell\le\ell_{max}, -\ell\le m\le\ell\}
+
+    For efficiency reason, the feature tensor is indexed by l, c, m.
+    For example, for lmax = 3, cmax = 2, we have a tensor of 1s2s 1p2p 1d2d 1f2f.
+    Currently, we support the following broadcasting:
+    lc -> lcm;
+    m -> lcm.
+    """
+
+    def __init__(self, lmax, cmax, src="lc", dst="lcm"):
+        super(BroadcastGTOTensor, self).__init__()
+        assert src in ["lc", "m"]
+        assert dst in ["lcm"]
+        self.src = src
+        self.dst = dst
+        self.lmax = lmax
+        self.cmax = cmax
+
+        if src == "lc":
+            self.src_dim = (lmax + 1) * cmax
+        else:
+            self.src_dim = (lmax + 1) ** 2
+        self.dst_dim = (lmax + 1) ** 2 * cmax
+
+        if src == "lc":
+            indices = self._generate_lc2lcm_indices()
+        else:
+            indices = self._generate_m2lcm_indices()
+        self.register_buffer("indices", indices)
+
+    def _generate_lc2lcm_indices(self):
+        r"""
+        lc -> lcm
+        .. math::
+            1s2s 1p2p → 1s2s 1p_x1p_y1p_z2p_x2p_y2p_z
+        [0, 1, 2, 2, 2, 3, 3, 3]
+
+        :return: (lmax+1)^2 * cmax
+        """
+        indices = [
+            l * self.cmax + c
+            for l in range(self.lmax + 1)
+            for c in range(self.cmax)
+            for _ in range(2 * l + 1)
+        ]
+        return torch.LongTensor(indices)
+
+    def _generate_m2lcm_indices(self):
+        r"""
+        m -> lcm
+        .. math::
+            s p_x p_y p_z → 1s2s 1p_x1p_y1p_z2p_x2p_y2p_z
+        [0, 0, 1, 2, 3, 1, 2, 3]
+
+        :return: (lmax+1)^2 * cmax
+        """
+        indices = [
+            l * l + m
+            for l in range(self.lmax + 1)
+            for _ in range(self.cmax)
+            for m in range(2 * l + 1)
+        ]
+        return torch.LongTensor(indices)
+
+    def forward(self, x):
+        """
+        Apply broadcasting to x.
+        :param x: (..., src_dim)
+        :return: (..., dst_dim)
+        """
+        assert x.size(-1) == self.src_dim, (
+            f"Input dimension mismatch! "
+            f"Should be {self.src_dim}, but got {x.size(-1)} instead!"
+        )
+        if self.src == self.dst:
+            return x
+        return x[..., self.indices]
+
+
+class GaussianOrbital(nn.Module):
+    r"""
+    Gaussian-type orbital
+
+    .. math::
+        \psi_{n\ell m}(\mathbf{r})=\sqrt{\frac{2(2a_n)^{\ell+3/2}}{\Gamma(\ell+3/2)}}
+        \exp(-a_n r^2) r^\ell Y_{\ell}^m(\hat{\mathbf{r}})
+
+    """
+
+    def __init__(self, gauss_start, gauss_end, num_gauss, lmax=7):
+        super(GaussianOrbital, self).__init__()
+        self.gauss_start = gauss_start
+        self.gauss_end = gauss_end
+        self.num_gauss = num_gauss
+        self.lmax = lmax
+
+        self.lc2lcm = BroadcastGTOTensor(lmax, num_gauss, src="lc", dst="lcm")
+        self.m2lcm = BroadcastGTOTensor(lmax, num_gauss, src="m", dst="lcm")
+        self.gauss: torch.Tensor
+        self.lognorm: torch.Tensor
+
+        self.register_buffer("gauss", torch.linspace(gauss_start, gauss_end, num_gauss))
+        self.register_buffer("lognorm", self._generate_lognorm())
+
+    def _generate_lognorm(self):
+        power = (torch.arange(self.lmax + 1) + 1.5).unsqueeze(-1)  # (l, 1)
+        numerator = power * torch.log(2 * self.gauss).unsqueeze(0) + math.log(
+            2
+        )  # (l, c)
+        denominator = torch.special.gammaln(power)
+        lognorm = (numerator - denominator) / 2
+        return lognorm.view(-1)  # (l * c)
+
+    def forward(self, vec):
+        """
+        Evaluate the basis functions
+        :param vec: un-normalized vectors of (..., 3)
+        :return: basis values of (..., (l+1)^2 * c)
+        """
+        # spherical
+        device = vec.device
+        r = vec.norm(dim=-1) + 1e-8
+        spherical = o3.spherical_harmonics(
+            list(range(self.lmax + 1)),
+            vec / r[..., None],
+            normalize=False,
+            normalization="integral",
+        )
+
+        # radial
+        r = r.unsqueeze(-1)
+        lognorm = self.lognorm * torch.ones_like(r)  # (..., l * c)
+        exponent = -self.gauss * (r * r)  # (..., c)
+        poly = torch.arange(
+            self.lmax + 1, dtype=torch.float, device=device
+        ) * torch.log(
+            r
+        )  # (..., l)
+        log = exponent.unsqueeze(-2) + poly.unsqueeze(-1)  # (..., l, c)
+        radial = torch.exp(log.view(*log.size()[:-2], -1) + lognorm)  # (..., l * c)
+        return self.lc2lcm(radial) * self.m2lcm(spherical)  # (..., (l+1)^2 * c)

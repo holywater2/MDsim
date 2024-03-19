@@ -1,0 +1,22 @@
+## Interaction을 먼저
+
+includes:
+- configs/water/base_no_amsgrad.yml
+
+model:
+  name: pme_schnet_v4
+  hidden_channels: 64
+  num_filters: 64
+  num_interactions: 3
+  num_gaussians: 25
+  cutoff: 6.0
+  use_pbc: True
+  otf_graph: True
+
+  mesh_cutoff: 6.0
+  mesh_conv_layers: 2
+  mesh_partition: 8
+  mesh_conv_modes: 4
+  mesh_channel: 16
+
+  using_ff: False

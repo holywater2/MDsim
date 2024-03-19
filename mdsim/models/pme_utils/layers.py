@@ -10,6 +10,7 @@ from e3nn.math import soft_one_hot_linspace
 
 from mdsim.models.pme_utils.utils import Rcovalent
 
+# covalent radii of elements
 rcov = Rcovalent
 
 
@@ -241,7 +242,7 @@ def init_particle_mesh(cell, n_partition, pbc=False):
         2,3,4 axis are the discretized index of the particle mesh.
 
     """
-
+    cell = cell.detach()
     num_batch = cell.shape[0]
     device = cell.device
 
@@ -263,14 +264,16 @@ def init_particle_mesh(cell, n_partition, pbc=False):
     meshgrid_batch = (
         torch.arange(num_batch).repeat_interleave(n_partition**3).to(device)
     )
+    mesh_length = torch.norm(cell, dim=-1) / n_partition
 
     res = {
         "cell": cell,
         "n_partition": n_partition,
-        "meshgrid": meshgrid,
-        "meshgrid_flat": meshgrid_flat,
+        "meshgrid": meshgrid.detach(),
+        "meshgrid_flat": meshgrid_flat.detach(),
         "meshgrid_batch": meshgrid_batch,
         "pbc": pbc,
+        "mesh_length": mesh_length.detach(),
     }
 
     if pbc:
@@ -356,9 +359,9 @@ def init_particle_mesh(cell, n_partition, pbc=False):
         res.update(
             {
                 "super_n_partition": super_n_partition,
-                "super_meshgrid": super_meshgrid,
-                "super_meshgrid_flat": super_meshgrid_flat,
-                "super_meshgrid_batch": super_meshgrid_batch,
+                "super_meshgrid": super_meshgrid.detach(),
+                "super_meshgrid_flat": super_meshgrid_flat.detach(),
+                "super_meshgrid_batch": super_meshgrid_batch.detach(),
                 "super_meshgrid_flat_to_normal_idx": super_meshgrid_flat_to_normal_idx,
                 "super_meshgrid_flat_idx_to_batch": super_meshgrid_flat_idx_to_batch,
             }
@@ -366,38 +369,95 @@ def init_particle_mesh(cell, n_partition, pbc=False):
     return res
 
 
-def init_potential(atom_coord, atomic_number, batch, meshgrid, pbc=False, n=16):
+def init_potential(
+    atom_coord,
+    atomic_number,
+    batch,
+    meshgrid,
+    pbc=False,
+    gaussian_bins_start=0.5,
+    gaussian_bins_end=5.0,
+    gaussian_bins_number=16,
+):
     num_batch = meshgrid["cell"].size(0)
     nd = meshgrid["meshgrid"].size(1)
     minimal_dist_grid = torch.zeros(num_batch, nd * nd * nd).to(atom_coord.device)
-    pot_feat = torch.zeros(num_batch, nd, nd, nd, n).to(atom_coord.device)
+    pot_feat = torch.zeros(num_batch, nd, nd, nd, gaussian_bins_number).to(
+        atom_coord.device
+    )
     Rcovalent = rcov.to(atom_coord.device)
 
     # gaussian_bins
-    gb = torch.linspace(0.5, 5.0, n).reshape(1, -1, 1, 1).to(atom_coord.device)
+    gb = (
+        torch.linspace(gaussian_bins_start, gaussian_bins_end, gaussian_bins_number)
+        .reshape(1, -1, 1, 1)
+        .to(atom_coord.device)
+    )
+    if pbc:
+        for batch_idx in range(num_batch):
+            bmesh = meshgrid["meshgrid"][batch_idx].reshape(
+                -1, 1, 1, 1, 3
+            )  # (nd^3, 1,1,1,3)
+            bcoord = atom_coord[batch == batch_idx].reshape(
+                1, 1, -1, 1, 3
+            )  # (1,1,n,1,3)
+            bcell = meshgrid["cell"][batch_idx]  # (3, 3)
+            super_bcell = torch.stack(
+                [
+                    i * bcell[0] + j * bcell[1] + k * bcell[2]
+                    for i in [-1, 0, 1]
+                    for j in [-1, 0, 1]
+                    for k in [-1, 0, 1]
+                ],
+                dim=0,
+            ).reshape(1, 1, 1, 27, 3)
+            all_norm = torch.norm(
+                bmesh - bcoord + super_bcell, dim=-1
+            )  # (nd^3, n, 27, 1)
+            atom_dist = Rcovalent[atomic_number[batch == batch_idx]].reshape(
+                1, 1, -1, 1
+            )
+            exp = torch.exp(-gb * (all_norm**2) / atom_dist)
+            res = torch.sum(exp, dim=[-1, -2]).reshape(nd, nd, nd, -1)
+            pot_feat[batch_idx] = res
+    else:
+        raise NotImplementedError("Not implemented for non-PBC case")
 
-    for batch_idx in range(num_batch):
-        bmesh = meshgrid["meshgrid"][batch_idx].reshape(
-            -1, 1, 1, 1, 3
-        )  # (nd^3, 1,1,1,3)
-        bcoord = atom_coord[batch == batch_idx].reshape(1, 1, -1, 1, 3)  # (1,1,n,1,3)
-        bcell = meshgrid["cell"][batch_idx]  # (3, 3)
-        super_bcell = torch.stack(
-            [
-                i * bcell[0] + j * bcell[1] + k * bcell[2]
-                for i in [-1, 0, 1]
-                for j in [-1, 0, 1]
-                for k in [-1, 0, 1]
-            ],
-            dim=0,
-        ).reshape(1, 1, 1, 27, 3)
-        all_norm = torch.norm(bmesh - bcoord + super_bcell, dim=-1)  # (nd^3, n, 27, 1)
-        atom_dist = Rcovalent[atomic_number[batch == batch_idx]].reshape(1, 1, -1, 1)
-        exp = torch.exp(-gb * (all_norm**2) / atom_dist)
-        res = torch.sum(exp, dim=[-1, -2]).reshape(nd, nd, nd, -1)
-        pot_feat[batch_idx] = res
-
+    pot_feat = pot_feat.reshape(-1, gaussian_bins_number)
     return pot_feat
+
+
+def init_feat(
+    atom_coord,
+    atomic_number,
+    batch,
+    meshgrid,
+    pbc=False,
+    feat_type="zeros",
+    n=16,
+    gaussian_bins_start=0.5,
+    gaussian_bins_end=5.0,
+):
+    assert feat_type in ["zeros", "potential"]
+    assert atom_coord.size(0) == batch.size(0)
+    assert atomic_number.size(0) == batch.size(0)
+    assert n > 0
+
+    if feat_type == "zeros":
+        mesh_feat = torch.zeros(meshgrid["meshgrid_flat"].size(0), n)
+    elif feat_type == "potential":
+        mesh_feat = init_potential(
+            atom_coord,
+            atomic_number,
+            batch,
+            meshgrid,
+            pbc,
+            gaussian_bins_start,
+            gaussian_bins_end,
+            n,
+        )
+
+    return mesh_feat.to(atom_coord.device)
 
 
 def radius_and_edge_atom_to_mesh(atom_coord, batch, particle_mesh, cutoff, pbc=False):
@@ -417,6 +477,8 @@ def radius_and_edge_atom_to_mesh(atom_coord, batch, particle_mesh, cutoff, pbc=F
             atom_src (batch): the source of the message passing
             edge_vec (batch, 3): the edge vector from the source to the destination
     """
+    assert cutoff > 0
+    assert atom_coord.size(0) == batch.size(0)
 
     # Calculate the source and destination within radius.
     # It is used for message passing
@@ -434,6 +496,7 @@ def radius_and_edge_atom_to_mesh(atom_coord, batch, particle_mesh, cutoff, pbc=F
         mesh_dst = particle_mesh["super_meshgrid_flat_idx_to_batch"][super_mesh_dst]
 
         # edge vector calculated in the supercell
+        mesh_pos = particle_mesh["super_meshgrid_flat"][super_mesh_dst]
         edge_vec = (
             particle_mesh["super_meshgrid_flat"][super_mesh_dst] - atom_coord[atom_src]
         )
@@ -445,15 +508,17 @@ def radius_and_edge_atom_to_mesh(atom_coord, batch, particle_mesh, cutoff, pbc=F
             batch,
             particle_mesh["particle_mesh_batch"],
         )
+        mesh_pos = particle_mesh["super_meshgrid_flat"][super_mesh_dst]
         edge_vec = particle_mesh["particle_mesh_flat"][mesh_dst] - atom_coord[atom_src]
-    return mesh_dst, atom_src, edge_vec
+    return mesh_dst, atom_src, edge_vec, mesh_pos
 
 
 def process_atom_to_mesh(atom_coord, batch, particle_mesh, cutoff, pbc=False):
-    mesh_dst, atom_src, edge_vec = radius_and_edge_atom_to_mesh(
+    mesh_dst, atom_src, edge_vec, mesh_pos = radius_and_edge_atom_to_mesh(
         atom_coord, batch, particle_mesh, cutoff, pbc
     )
     atom_with_mesh = torch.cat([atom_coord, particle_mesh["meshgrid_flat"]], dim=0)
+    atom_with_super_mesh = torch.cat([atom_coord, mesh_pos], dim=0)
     atom_with_mesh_batch = torch.cat([batch, particle_mesh["meshgrid_batch"]], dim=0)
 
     atom_with_mesh_dst = mesh_dst + atom_coord.size(0)
@@ -461,6 +526,7 @@ def process_atom_to_mesh(atom_coord, batch, particle_mesh, cutoff, pbc=False):
 
     return (
         atom_with_mesh,
+        atom_with_super_mesh,
         atom_with_mesh_batch,
         atom_with_mesh_dst,
         atom_with_mesh_src,

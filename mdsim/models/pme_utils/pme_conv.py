@@ -213,6 +213,8 @@ class PMEConv(nn.Module):
         self.num_fourier_time = num_fourier_time
         self.padding = padding  # pad the domain if input is non-periodic
         self.fc0 = nn.Linear(self.num_fourier_time + 3, self.width)
+        self.fc1 = nn.Linear(self.width, 64)
+        self.fc2 = nn.Linear(64, self.num_fourier_time)
         # input channel is 12: the solution of the first 10 timesteps + 3 locations (u(1, x, y), ..., u(10, x, y),  x, y, t)
         self.num_layers = num_layers
         if using_ff:
@@ -263,6 +265,10 @@ class PMEConv(nn.Module):
         if self.padding != 0:
             x = x[..., :, : -self.padding, : -self.padding, : -self.padding]
         x = x.permute(0, 2, 3, 4, 1)  # pad the domain if input is non-periodic
+
+        x = self.fc1(x)
+        x = F.gelu(x)
+        x = self.fc2(x)
 
         if reshape:
             x = x.reshape(-1, x.shape[-1])

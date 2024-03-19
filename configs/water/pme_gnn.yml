@@ -1,0 +1,19 @@
+includes:
+- configs/water/base_no_amsgrad.yml
+
+model:
+  name: pme_gnn
+  
+  # use_pbc: True
+  cutoff: 5.0
+  otf_graph: True
+
+  mesh_cutoff: 5.0
+  mesh_conv_layers: 2
+  mesh_partition: 12
+  mesh_conv_modes: 6
+
+  mesh_channel: 16
+  mesh_hidden_channel: 8
+
+  using_ff: False

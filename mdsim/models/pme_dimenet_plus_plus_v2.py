@@ -7,22 +7,24 @@ import torch
 from torch_geometric.nn import radius_graph
 from torch_scatter import scatter
 
-from mdsim.models.utils.dimenet_plus_plus_layers import DimeNetPlusPlus
+from mdsim.models.utils.dimenet_plus_plus_layers import (
+    DimeNetPlusPlus,
+    InteractionPPBlock,
+    OutputPPBlock,
+    swish,
+)
 from mdsim.common.registry import registry
 from mdsim.common.utils import (
     conditional_grad,
     get_pbc_distances,
     radius_graph_pbc,
 )
+from torch_geometric.nn.models.schnet import *
+
+from mdsim.models.pme_utils import *
 
 
-try:
-    import sympy as sym
-except ImportError:
-    sym = None
-
-
-@registry.register_model("dimenetplusplus")
+@registry.register_model("dimenetplusplus_pme_v2")
 class DimeNetPlusPlusWrap(DimeNetPlusPlus):
     def __init__(
         self,
@@ -31,7 +33,6 @@ class DimeNetPlusPlusWrap(DimeNetPlusPlus):
         num_targets,
         use_pbc=True,
         regress_forces=True,
-        otf_graph=False,
         hidden_channels=128,
         num_blocks=4,
         int_emb_size=64,
@@ -39,17 +40,33 @@ class DimeNetPlusPlusWrap(DimeNetPlusPlus):
         out_emb_channels=256,
         num_spherical=7,
         num_radial=6,
+        otf_graph=False,
         cutoff=10.0,
         envelope_exponent=5,
         num_before_skip=1,
         num_after_skip=2,
         num_output_layers=3,
+        mesh_cutoff=10.0,
+        mesh_conv_layers=3,
+        mesh_partition=20,
+        mesh_conv_modes=10,
+        mesh_channel=32,
+        using_ff=False,
+        num_gaussians=50,
+        num_filters=128,
+        sch_cutoff=6.0,
+        *args,
+        **kwargs,
     ):
         self.num_targets = num_targets
         self.regress_forces = regress_forces
         self.use_pbc = use_pbc
         self.cutoff = cutoff
         self.otf_graph = otf_graph
+
+        self.mesh_channel = mesh_channel
+        self.mesh_partition = mesh_partition
+        self.mesh_cutoff = mesh_cutoff
 
         super(DimeNetPlusPlusWrap, self).__init__(
             hidden_channels=hidden_channels,
@@ -65,6 +82,34 @@ class DimeNetPlusPlusWrap(DimeNetPlusPlus):
             num_before_skip=num_before_skip,
             num_after_skip=num_after_skip,
             num_output_layers=num_output_layers,
+        )
+
+        self.embedding_fm = Embedding(100, mesh_channel)
+        self.distance_expansion = GaussianSmearing(0.0, cutoff, num_gaussians)
+        self.act = ShiftedSoftplus()
+
+        self.mesh_interaction = InteractionBlock(
+            mesh_channel, num_gaussians, num_filters, sch_cutoff
+        )
+
+        self.mesh_interaction2 = InteractionBlock(
+            mesh_channel, num_gaussians, num_filters, sch_cutoff
+        )
+
+        self.mesh_embedding = nn.Linear(16, mesh_channel)
+
+        self.lin1_fm = Linear(mesh_channel, mesh_channel // 2)
+        self.lin2_fm = Linear(mesh_channel // 2, 1)
+
+        self.pmeconv = PMEConv(
+            modes1=mesh_conv_modes,
+            modes2=mesh_conv_modes,
+            modes3=mesh_conv_modes,
+            width=mesh_channel,
+            num_fourier_time=mesh_channel,
+            padding=0,
+            num_layers=mesh_conv_layers,
+            using_ff=using_ff,
         )
 
     @conditional_grad(torch.enable_grad())
@@ -137,6 +182,64 @@ class DimeNetPlusPlusWrap(DimeNetPlusPlus):
         ):
             x = interaction_block(x, rbf, sbf, idx_kj, idx_ji)
             P += output_block(x, rbf, i, num_nodes=pos.size(0))
+
+        z = data.atomic_numbers.long()
+        mesh_charge = self.embedding_fm(z)
+
+        mesh = init_particle_mesh(data.cell, self.mesh_partition, self.use_pbc)
+        mesh_feat = init_feat(
+            data.pos,
+            data.atomic_numbers,
+            data.batch,
+            mesh,
+            self.use_pbc,
+            n=self.mesh_channel,
+            feat_type="zeros",
+        )
+        mesh_h3 = torch.prod(mesh["mesh_length"], dim=1).unsqueeze(1)
+
+        (
+            atom_with_mesh,
+            atom_with_super_mesh,
+            atom_with_mesh_batch,
+            atom_with_mesh_dst,
+            atom_with_mesh_src,
+            edge_vec,
+        ) = process_atom_to_mesh(
+            data.pos, data.batch, mesh, self.mesh_cutoff, self.use_pbc
+        )
+
+        h_with_mesh = torch.cat([mesh_charge, mesh_feat], dim=0)
+        atom_with_mesh_dist = torch.norm(edge_vec, dim=1)
+        atom_with_mesh_edge_attr = self.distance_expansion(atom_with_mesh_dist)
+        h_with_mesh = self.mesh_interaction(
+            h_with_mesh,
+            torch.vstack([atom_with_mesh_src, atom_with_mesh_dst]),
+            atom_with_mesh_dist,
+            atom_with_mesh_edge_attr,
+        )
+        h_with_mesh *= 1 / mesh_h3[atom_with_mesh_batch]
+        mesh_feat = h_with_mesh[mesh_charge.shape[0] :]
+        nd = mesh["meshgrid"].shape[1]
+        mesh_feat = mesh_feat.reshape(mesh["meshgrid"].shape[0], nd, nd, nd, -1)
+        mesh_grid = get_grid(mesh_feat.shape, mesh_feat.device)
+        mesh_feat = self.pmeconv(mesh_feat, mesh_grid)
+        mesh_feat = mesh_feat.reshape(-1, mesh_feat.shape[-1])
+
+        h_with_mesh = torch.cat([mesh_charge, mesh_feat], dim=0)
+        h_with_mesh = self.mesh_interaction2(
+            h_with_mesh,
+            torch.vstack([atom_with_mesh_dst, atom_with_mesh_src]),
+            atom_with_mesh_dist,
+            atom_with_mesh_edge_attr,
+        )
+
+        mesh_charge = h_with_mesh[: mesh_charge.shape[0]] * mesh_charge * mesh_h3[batch]
+        mesh_charge = self.lin1_fm(mesh_charge)
+        mesh_charge = self.act(mesh_charge)
+        mesh_charge = self.lin2_fm(mesh_charge)
+
+        P = P + mesh_charge
 
         energy = P.sum(dim=0) if batch is None else scatter(P, batch, dim=0)
 
