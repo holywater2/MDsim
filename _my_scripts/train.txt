@@ -80,3 +80,21 @@ CUDA_VISIBLE_DEVICES=0 python main.py --mode train --config-yml configs/water/pm
 CUDA_VISIBLE_DEVICES=4 python main.py --mode train --config-yml configs/water/pme_dpp_v2-3.yml  --size 1k -id test4
 
 CUDA_VISIBLE_DEVICES=7 python main.py --mode train --config-yml configs/water/pme_schnet_v4-4.yml  --size 1k -id test5
+
+CUDA_VISIBLE_DEVICES=7 python main.py --mode train --config-yml configs/water/pme_schnet_v4-5.yml  --size 1k -id 5
+
+CUDA_VISIBLE_DEVICES=4 python main.py --mode train --config-yml configs/water/pme_dpp_v2-4.yml  --size 1k -id co10_f8
+
+CUDA_VISIBLE_DEVICES=6 python main.py --mode train --config-yml configs/water/pme_dpp_v2-5.yml  --size 1k -id co10_f6
+
+CUDA_VISIBLE_DEVICES=3 python main.py --mode train --config-yml configs/water/pme_dpp_v2-6.yml  --size 1k -id co10_f12
+
+CUDA_VISIBLE_DEVICES=3 python main.py --mode train --config-yml configs/water/pme_schnet_v4-a-1.yml  --size 1k -id a-1-norm-co8-f8
+CUDA_VISIBLE_DEVICES=3 python main.py --mode train --config-yml configs/water/pme_schnet_v4-a-2.yml  --size 1k -id a-1-norm-co8-f12
+CUDA_VISIBLE_DEVICES=5 python main.py --mode train --config-yml configs/water/pme_schnet_v4-a-3.yml  --size 1k -id a-1-norm-co10-f8
+
+
+CUDA_VISIBLE_DEVICES=2 python main.py --mode train --config-yml configs/water/gemnet-dT.yml  --size 1k -id base
+CUDA_VISIBLE_DEVICES=1 python main.py --mode train --config-yml configs/water/gemnet-T.yml  --size 1k -id base
+
+CUDA_VISIBLE_DEVICES=7 python main.py --mode train --config-yml configs/water/pme_schnet_v4-6.yml  --size 1k -id base
