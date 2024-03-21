@@ -98,3 +98,27 @@ CUDA_VISIBLE_DEVICES=2 python main.py --mode train --config-yml configs/water/ge
 CUDA_VISIBLE_DEVICES=1 python main.py --mode train --config-yml configs/water/gemnet-T.yml  --size 1k -id base
 
 CUDA_VISIBLE_DEVICES=7 python main.py --mode train --config-yml configs/water/pme_schnet_v4-6.yml  --size 1k -id base
+
+CUDA_VISIBLE_DEVICES=3 python main.py --mode train --config-yml configs/water/pme_schnet_v4-b-1.yml --size 1k -id co6_f8-2 # (not using ff)
+
+CUDA_VISIBLE_DEVICES=7 python main.py --mode train --config-yml configs/water/pme_schnet_v4-b-2.yml --size 1k -id co6_f16 # (not using ff)
+
+CUDA_VISIBLE_DEVICES=7 python main.py --mode train --config-yml configs/water/pme_schnet_v4-c-1.yml --size 1k -id co6_f8 # (not using ff)
+
+CUDA_VISIBLE_DEVICES=7 python main.py --mode train --config-yml configs/water/pme_schnet_v4-d-1.yml --size 1k -id co6_f8 # (not using ff)
+
+CUDA_VISIBLE_DEVICES=6 python main.py --mode train --config-yml configs/water/pme_schnet_v4-e-1.yml --size 1k -id co6_f8_fixed # (not using ff)
+CUDA_VISIBLE_DEVICES=6 python main.py --mode train --config-yml configs/water/pme_schnet_v4-f-1.yml --size 1k -id co6_f8_fixed # (not using ff)
+
+CUDA_VISIBLE_DEVICES=5 python main.py --mode train --config-yml configs/water/pme_dpp_v3.yml  --size 1k -id co6_f8_fixed
+
+CUDA_VISIBLE_DEVICES=7 python main.py --mode train --config-yml configs/water/pme_dpp_v3-1.yml  --size 1k -id co8_f12_fixed
+CUDA_VISIBLE_DEVICES=6 python main.py --mode train --config-yml configs/water/pme_dpp_v3-2.yml  --size 1k -id co8_f16_fixed
+CUDA_VISIBLE_DEVICES=5 python main.py --mode train --config-yml configs/water/pme_dpp_v3-3.yml  --size 1k -id co8_f24_fixed
+CUDA_VISIBLE_DEVICES=4 python main.py --mode train --config-yml configs/water/pme_dpp_v3-4.yml  --size 1k -id co8_f8_c24_fixed
+
+CUDA_VISIBLE_DEVICES=2 python main.py --mode train --config-yml configs/water/pme_schnet_v4-f-2.yml --size 1k -id co8_f12_fixed # (not using ff)
+CUDA_VISIBLE_DEVICES=1 python main.py --mode train --config-yml configs/water/pme_schnet_v4-f-3.yml --size 1k -id co8_f16_fixed # (not using ff)
+CUDA_VISIBLE_DEVICES=0 python main.py --mode train --config-yml configs/water/pme_schnet_v4-f-4.yml --size 1k -id co8_f24_fixed # (not using ff)
+
+CUDA_VISIBLE_DEVICES=1 python main.py --mode train --config-yml configs/water/pme_gemnet-T_v1.yml  --size 1k -id co6_f8

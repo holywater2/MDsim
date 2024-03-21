@@ -9,5 +9,6 @@ from .dimenet import DimeNetWrap as DimeNet
 from .dimenet_plus_plus import DimeNetPlusPlusWrap as DimeNetPlusPlus
 from .forcenet import ForceNet
 from .gemnet.gemnet import GemNetT
+from .gemnet.pme_gemnet import GemNetT as pmeGemNet
 from .schnet import SchNetWrap as SchNet
 from .spinconv import spinconv
